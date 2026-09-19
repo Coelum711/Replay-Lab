@@ -1,0 +1,67 @@
+# Third-party notices
+
+Replay Lab is licensed under GPL-3.0-only.
+
+The project intentionally interoperates with and/or adapts ideas or small implementation fragments from these projects:
+
+1. **TRPG-Replay-Generator / RplGenStudio** — DanDDXuanX — GPL-3.0.
+   - Source: https://github.com/DanDDXuanX/TRPG-Replay-Generator
+   - Upstream revision used for the 0.18–0.21 ports: `89e65b63c97a74ebff665be038e6dea2a700ec14`.
+   - `src/importers/rplgen.ts` derives from the public RGL grammar/lexer and now also maps RplGen `tx_method_default` (`all/w2w/l2l/run`) plus animation `formula` settings into Replay Lab's structured data.
+   - `src/editor/media-relink.ts` adapts the bulk missing-media relocation workflow from `core/GUI_Relocate.py`: choose one directory, recursively match original filenames, and update unresolved media. Replay Lab adds explicit ambiguity handling for duplicate filenames.
+   - `src/renderers/easing.ts` is a TypeScript adaptation of the animation curves in `core/Formulas.py` (`linear`, `quadratic`, `quadraticR`, `sigmoid`, `right`, `left`, `sincurve`).
+   - `src/renderers/rplgen-motion.ts` is a TypeScript continuous-time adaptation of `core/Motion.py`, retaining RplGen compound alpha/motion/direction/scale/cut semantics.
+   - 0.19 also maps RGL background switch methods and structured Dice/HitPoint command fields into Replay Lab data and renders them with Replay Lab-owned Canvas presentation code.
+   - `src/importers/rplgen-mediadef.ts` is a GPL-derived TypeScript compatibility parser based on the `MediaDef` grammar/parameter tables in `core/ScriptParser.py`; it normalizes Text/RichText/Bubble/Balloon/DynamicBubble/ChatWindow definitions while retaining raw upstream arguments for not-yet-implemented details.
+   - 0.20–0.21 map RGL `<bubble>` commands and MediaDef dialogue presentation into Replay Lab data. 0.21 further adapts DynamicBubble nine-slice stretch/collage behavior and ChatWindow rolling-history/sub-bubble/avatar semantics from `core/Medias.py`, plus RichText icon/rich-label and Balloon multi-header structures. The Canvas presentation is Replay Lab-owned; no RplGen fonts, bubble images, icons, sample media, or other artwork are copied.
+   - The GPL-3.0 text used by both projects is reproduced as `licenses/RplGen-GPL-3.0.txt`.
+   - Do not reuse RplGenStudio icons, mascot, name, or other third-party artwork.
+
+2. **KuchiPaku** — Copyright (c) 2022 InuInu — MIT.
+   - Source: https://github.com/InuInu2022/KuchiPaku
+   - `src/lipsync/viseme.ts` adapts KuchiPaku's phoneme grouping for A/I/U/E/O and open/closed consonants.
+   - `src/lipsync/lab.ts` follows its LAB timing model (100 ns ticks and phoneme intervals).
+   - Original MIT license is reproduced in `licenses/KuchiPaku-MIT.txt`.
+
+3. **ccfolia-chatlog-formatter** — y-8-m — MIT.
+   - Source: https://github.com/y-8-m/ccfolia-chatlog-formatter
+   - `src/importers/ccfolia.ts` supports the semantic structure used by the formatter (`.player`, `.speaker-text`, `.player-message`) and classic Cocofolia HTML logs.
+
+4. **VNVE** — Copyright (c) 2023 vnve — MIT.
+   - Source: https://github.com/vnve/vnve
+   - `src/renderers/vnve.ts` is an adapter against VNVE's public Creator/Scene/Img/Text/Sound API. No VNVE source code is copied into Replay Lab.
+   - Original MIT license is reproduced in `licenses/VNVE-MIT.txt`.
+
+5. **Kokoro / kokoro-js** — hexgrad / contributors — Apache-2.0.
+   - Source: https://github.com/hexgrad/kokoro
+   - Model: https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX
+   - `src/tts/kokoro.ts` is an adapter around the public `KokoroTTS.from_pretrained()` / `generate()` / voice catalog API. Replay Lab does not bundle Kokoro model weights in this repository.
+   - Kokoro and the published model are Apache-2.0 licensed; downstream app distributions that bundle them must preserve their applicable notices/license terms.
+
+6. **TanStack Virtual Core** — Tanner Linsley / contributors — MIT.
+   - Source: https://github.com/TanStack/virtual
+   - Version targeted by the 0.23 Studio adapter: `@tanstack/virtual-core` 3.17.9.
+   - `web/virtual-script-list.js` is Replay Lab-owned adapter code around TanStack Virtual's public headless API. The static Studio loads the published ESM package on demand for long Logs; bundled applications should install the package normally.
+   - Original MIT license is reproduced in `licenses/TanStack-Virtual-MIT.txt`.
+
+7. **Mediabunny** — Vanilagy / contributors — MPL-2.0.
+   - Source: https://github.com/Vanilagy/mediabunny
+   - Version targeted by the 0.23 browser exporter: `mediabunny` 1.56.0.
+   - Replay Lab uses the unmodified public `Output`, `Mp4OutputFormat`, `CanvasSource`, `AudioBufferSource`, `Quality`, `BufferTarget`, and `StreamTarget` APIs for WebCodecs-backed H.264/AAC MP4 creation. No Mediabunny source file is copied or modified in Replay Lab.
+   - The MPL-2.0 text is reproduced in `licenses/Mediabunny-MPL-2.0.txt`. If Mediabunny itself is modified in a distributed build, those modified covered files remain subject to MPL-2.0.
+
+8. **Inochi2D / Inochi Creator** — Inochi2D Project / Kitsunebi Games — BSD-2-Clause.
+   - Source: https://github.com/Inochi2D/inochi2d and https://github.com/Inochi2D/inochi-creator
+   - Revision inspected for the 0.25 puppet port: `ec702261dd6428141bfd0b174a015f8af872d3ed` (core) and current Creator sources inspected alongside it.
+   - `src/puppet/rig.ts` adapts the upstream `Parameter1D` / Parameter-Binding architecture into Replay Lab's scalar replay parameters and part-property/deformation bindings.
+   - `src/puppet/lattice.ts` and the Canvas puppet renderer adapt the upstream `LatticeDeformer` concept into a normalized regular lattice suitable for transparent browser character layers.
+   - Replay Lab does not bundle Inochi models, sample puppets, textures, icons, branding, or other artwork.
+   - Original BSD-2-Clause license is reproduced in `licenses/Inochi2D-BSD-2-Clause.txt`.
+
+Keep this file and the relevant license notices when redistributing derived builds.
+
+
+## Voicebox (optional external integration)
+- Project: https://github.com/jamiepine/voicebox
+- License: MIT
+- Replay Lab does **not** bundle Voicebox code, models, or binaries. The optional integration calls a separately installed local Voicebox service through Replay Lab's narrow localhost bridge.

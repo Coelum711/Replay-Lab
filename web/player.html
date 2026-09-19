@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Replay Lab Player</title>
+<style>
+:root{color-scheme:dark;--bg:#090c12;--panel:#131923;--line:#30394d;--text:#eef2fa;--muted:#95a0b6;--accent:#5869ad}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif;min-height:100vh;display:grid;place-items:center}button{font:inherit;background:#283044;color:var(--text);border:1px solid #3a4662;border-radius:9px;padding:8px 12px;cursor:pointer}button.primary,button.active{background:var(--accent)}.player{width:min(1280px,100vw);display:grid;grid-template-rows:auto 1fr auto;background:var(--panel);min-height:min(100vh,820px)}header,.controls{display:flex;gap:8px;align-items:center;padding:10px 12px}header{border-bottom:1px solid var(--line)}.controls{border-top:1px solid var(--line);flex-wrap:wrap}.grow{flex:1}.muted{color:var(--muted);font-size:12px}.stage{position:relative;background:#090c12;min-height:0}.stage canvas{width:100%;height:auto;display:block;aspect-ratio:16/9}.object-hint{position:absolute;left:50%;top:7%;transform:translateX(-50%);padding:8px 12px;background:rgba(9,12,18,.88);border:1px solid #3c4963;border-radius:10px;pointer-events:none}.object-hint[hidden]{display:none}.log{position:absolute;inset:7%;padding:12px;background:rgba(9,12,18,.96);border:1px solid var(--line);border-radius:12px;overflow:auto}.log[hidden]{display:none}.entry{padding:7px 9px;border-bottom:1px solid #242c3c}.entry b{margin-right:8px}@media(max-width:700px){header{align-items:flex-start}.controls button{flex:1}.player{min-height:100vh}}
+</style>
+</head>
+<body>
+<div class="player">
+<header><strong id="title">Replay Lab</strong><span id="position" class="muted"></span><div class="grow"></div><span id="mode" class="muted">手动</span></header>
+<div class="stage"><canvas id="stage" width="1280" height="720"></canvas><div id="objectHint" class="object-hint" hidden></div><div id="log" class="log" hidden></div></div>
+<div class="controls"><button id="prev">←</button><button id="next" class="primary">下一句 →</button><button id="auto">AUTO</button><button id="skip">SKIP</button><button id="backlog">LOG</button><button id="restart">RESTART</button></div>
+</div>
+<script type="module" src="./player.js"></script>
+</body>
+</html>

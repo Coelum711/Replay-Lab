@@ -1,0 +1,26 @@
+{
+  "name": "replay-lab",
+  "version": "0.53.2-dev",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "description": "Text-first TRPG replay compiler and renderer glue layer.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/update-runtime-manifest.mjs",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "optionalDependencies": {
+    "kokoro-js": "^1.2.1",
+    "@tanstack/virtual-core": "^3.17.9",
+    "mediabunny": "^1.56.0"
+  },
+  "peerDependenciesMeta": {
+    "@vnve/core": {
+      "optional": true
+    }
+  }
+}

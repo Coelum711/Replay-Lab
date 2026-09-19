@@ -1,0 +1,1090 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Replay Lab v0.5</title>
+<style>
+:root{
+  --bg:#11131a; --panel:#181b23; --panel2:#202431; --line:#2c3343; --text:#edf2ff; --muted:#9da6bd;
+  --accent:#8b7cf0; --good:#78e0bc; --bad:#ef8a8a; --warn:#f4d18b;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+button,input,select,textarea{font:inherit}
+button{cursor:pointer;border:none;border-radius:10px;padding:8px 12px;background:#2a3040;color:var(--text)}
+button.primary{background:linear-gradient(135deg,#7e6ff0,#5f87ff)}
+button.danger{background:#5b2930}
+button.ghost{background:transparent;border:1px solid var(--line)}
+button.small{padding:5px 9px;border-radius:8px;font-size:12px}
+button:disabled{opacity:.55;cursor:not-allowed}
+input[type="text"],input[type="number"],select,textarea,input[type="color"]{width:100%;background:#121620;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+textarea{min-height:150px;resize:vertical}
+input[type="file"]{width:100%;color:var(--muted)}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+.app{display:grid;grid-template-columns:360px 1fr 420px;gap:14px;padding:14px;height:100%}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.panel h2,.panel h3{margin:0;font-size:15px}
+.panel-head{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.panel-body{padding:12px 14px;overflow:auto;min-height:0}
+.stack{display:grid;gap:12px}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap}
+.kicker{font-size:12px;color:var(--muted)}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:999px;background:#23293a;border:1px solid #36405a;font-size:12px;color:#d8e0f5}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:999px;background:#23293a;border:1px solid #36405a;font-size:11px}
+.main-preview{display:grid;grid-template-rows:auto 1fr auto;min-height:0}
+.canvas-wrap{padding:12px;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#11141c,#0d1017);min-height:0}
+canvas{width:100%;max-width:960px;aspect-ratio:16/9;background:#0a0d13;border:1px solid var(--line);border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.45)}
+.controls{padding:12px;border-top:1px solid var(--line);display:grid;gap:10px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.row3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.preview-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.preview-toolbar .grow{flex:1}
+#seek{width:100%}
+.section{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.02)}
+.empty{padding:18px;border:1px dashed #3a4258;border-radius:12px;color:var(--muted);text-align:center}
+.char-list,.script-list{display:grid;gap:10px}
+.char-card{border:1px solid var(--line);background:#141823;border-radius:14px;padding:10px;display:grid;gap:10px}
+.char-card.active{outline:2px solid #6d7bff44;border-color:#5a66a1}
+.char-top{display:flex;gap:10px;align-items:center}
+.avatar{width:52px;height:52px;border-radius:14px;background:#262d3e;display:flex;align-items:center;justify-content:center;font-weight:700;overflow:hidden;flex:0 0 auto;color:#fff}
+.avatar img{width:100%;height:100%;object-fit:cover}
+.grow{flex:1;min-width:0}
+.asset-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.asset-slot{background:#11151e;border:1px dashed #3d455d;border-radius:12px;padding:8px;display:grid;gap:6px}
+.asset-preview{height:74px;border-radius:10px;background:#1a2030;display:flex;align-items:center;justify-content:center;overflow:hidden;color:var(--muted);font-size:12px}
+.asset-preview img{width:100%;height:100%;object-fit:contain}
+.inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.line-item{display:grid;grid-template-columns:40px 140px 62px 1fr 70px 72px;gap:8px;align-items:center;padding:10px;border:1px solid var(--line);border-radius:12px;background:#141823}
+.line-item.selected{border-color:#5c69a8;background:#192032}
+.line-num{color:var(--muted);font-variant-numeric:tabular-nums;text-align:center}
+.line-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.type-badge{font-size:11px;padding:2px 7px;border-radius:999px;text-align:center}
+.type-badge.dialogue{background:#2a344c;color:#dbe2ff}
+.type-badge.dice{background:#4a3a20;color:#f7d895}
+.type-badge.system{background:#31353f;color:#d0d4df}
+.type-badge.narration{background:#243941;color:#bfe6f4}
+.dot{width:10px;height:10px;border-radius:50%}
+.speaker-pill{display:flex;align-items:center;gap:6px;min-width:0}
+.audio-flag{font-size:11px;color:var(--muted)}
+.audio-flag.yes{color:var(--good)}
+.inspector-grid{display:grid;gap:10px}
+.checks{display:flex;gap:10px;flex-wrap:wrap}
+.checks label{margin:0;color:var(--text)}
+.stage-chips{display:flex;gap:6px;flex-wrap:wrap}
+.stage-chip{padding:4px 9px;border-radius:999px;background:#23293a;border:1px solid #39435d;font-size:12px}
+.footer-note{font-size:12px;color:var(--muted)}
+.toast{position:fixed;right:16px;bottom:16px;min-width:180px;max-width:420px;padding:10px 14px;border-radius:12px;background:#1f2533;border:1px solid var(--line);box-shadow:0 15px 35px rgba(0,0,0,.35);opacity:0;transform:translateY(8px);transition:.2s;pointer-events:none;z-index:99}
+.toast.show{opacity:1;transform:translateY(0)}
+.toast.ok{border-color:#2d6b57}.toast.error{border-color:#804047}
+.progress{height:8px;background:#10141d;border-radius:999px;overflow:hidden;border:1px solid var(--line)}
+.progress > div{height:100%;width:0;background:linear-gradient(90deg,#7e6ff0,#78e0bc)}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.muted{color:var(--muted)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.expr-manager{border-top:1px solid var(--line);padding-top:8px}
+.expr-manager summary{cursor:pointer;color:#cdd5e8;font-size:12px}
+.expr-list{display:grid;gap:7px;margin-top:8px}
+.expr-row{display:grid;grid-template-columns:82px 1fr auto;gap:7px;align-items:center;padding:7px;border:1px solid var(--line);border-radius:10px;background:#11151e}
+.expr-assets{display:flex;gap:5px;flex-wrap:wrap}
+.expr-file{display:inline-flex;align-items:center;justify-content:center;padding:4px 7px;border-radius:7px;border:1px solid #39435d;background:#202636;font-size:10px;cursor:pointer;color:#dce4f7}
+.expr-file.filled{border-color:#37745f;color:#9bf0cd}
+.position-rows{display:grid;gap:7px}
+.position-row{display:grid;grid-template-columns:1fr 120px;gap:8px;align-items:center}
+.audio-status{padding:7px 9px;background:#11151e;border:1px solid var(--line);border-radius:9px}
+
+.asset-library{display:grid;gap:9px}
+.asset-library-row{display:grid;grid-template-columns:72px 1fr auto;gap:8px;align-items:center}
+.asset-library-row strong{font-size:12px}
+.asset-counts{display:flex;gap:6px;flex-wrap:wrap}
+.asset-count{padding:3px 8px;border-radius:999px;background:#202638;border:1px solid #35405a;font-size:11px;color:#cfd7ed}
+.import-summary{padding:9px 10px;border-radius:10px;background:#111620;border:1px solid var(--line);white-space:pre-wrap}
+
+@media (max-width: 1300px){.app{grid-template-columns:330px 1fr 390px}}
+@media (max-width: 1100px){.app{grid-template-columns:1fr;grid-auto-rows:minmax(320px,auto);height:auto}.panel{min-height:320px}.main-preview{min-height:520px}.line-item{grid-template-columns:34px 120px 56px 1fr 64px 66px}}
+
+.scene-box{border:1px solid #3b4560;background:#151b27;border-radius:14px;padding:12px;display:grid;gap:10px}
+.scene-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.event-pill{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:999px;background:#302b4c;color:#dcd7ff;border:1px solid #554c88;font-size:10px;margin-left:5px}
+.event-summary{font-size:11px;color:#bfc8dd;display:flex;gap:5px;flex-wrap:wrap}
+.scene-status{padding:8px 10px;border-radius:10px;background:#111620;border:1px solid var(--line);font-size:12px;color:var(--muted)}
+.scene-stage-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.scene-stage-grid .checks{align-content:start}
+@media (max-width:1100px){.scene-grid,.scene-stage-grid{grid-template-columns:1fr}}
+
+.script-marker{border-radius:12px;padding:9px 12px;border:1px solid var(--line);display:flex;align-items:center;gap:10px;cursor:pointer}
+.script-marker.chapter{background:linear-gradient(90deg,#2c2a46,#1b1e29);border-color:#514f7f;font-weight:800;font-size:14px}
+.script-marker.scene{background:linear-gradient(90deg,#1d3441,#171e28);border-color:#365e73;font-weight:700}
+.script-marker .marker-icon{width:24px;text-align:center;opacity:.9}
+.action-row{margin-left:38px;padding:6px 10px;border-left:2px solid #4d5775;background:#151923;border-radius:0 9px 9px 0;color:#c4cce0;display:flex;gap:8px;align-items:center;cursor:pointer;font-size:12px}
+.action-row:hover,.script-marker:hover{filter:brightness(1.08)}
+.action-token{padding:2px 7px;border-radius:999px;background:#242c3e;border:1px solid #394764;color:#dce5fb;font-size:11px}
+.structure-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.quick-action{display:grid;grid-template-columns:1.4fr 1fr auto;gap:8px;align-items:end}
+.script-actions{display:flex;gap:4px;justify-content:flex-end}
+.script-actions button{padding:3px 6px;border-radius:7px;font-size:11px}
+.scene-index{font-size:11px;color:#9fb2ca;margin-left:auto;font-weight:500}
+@media(max-width:700px){.structure-grid,.quick-action{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>导入 / 工程</h2>
+        <div class="kicker">Log → 角色 → 剧本 → 预览</div>
+      </div>
+      <span class="badge">v0.7</span>
+    </div>
+    <div class="panel-body stack">
+      <div class="section stack">
+        <div>
+          <label for="logInput">粘贴普通文本 Log（支持 “角色: 台词” / “角色：台词” / QQ 风格简化）</label>
+          <textarea id="logInput" placeholder="Arthur: 我要调查这扇门。\nKP: 投一个侦查。\nArthur: 1d100=32/65 成功"></textarea>
+        </div>
+        <div class="row">
+          <div>
+            <label for="logFiles">上传 Log 文件（可多选）</label>
+            <input id="logFiles" type="file" multiple accept=".txt,.log,.html,.htm,.json,text/plain,text/html,application/json">
+          </div>
+          <div>
+            <label for="logFolder">直接上传 Log 文件夹</label>
+            <input id="logFolder" type="file" webkitdirectory directory multiple accept=".txt,.log,.html,.htm,.json,text/plain,text/html,application/json">
+          </div>
+        </div>
+        <div style="margin-top:10px">
+          <label for="projectFolder"><strong>直接上传整个 Replay 制作文件夹</strong></label>
+          <input id="projectFolder" type="file" webkitdirectory directory multiple>
+          <div class="footer-note">会同时识别 Log、角色立绘、背景 / CG、BGM / SFX 和按编号命名的逐句语音，并尽量自动绑定。</div>
+        </div>
+        <div id="logImportStatus" class="footer-note">支持 TXT / LOG / Cocofolia HTML / 常见聊天 JSON。Log 文件夹只读取记录；“整个制作文件夹”会同时建立素材库。</div>
+        <div class="toolbar">
+          <button id="btnParse" class="primary">解析粘贴文本</button>
+          <button id="btnSample">载入示例</button>
+          <button id="btnClear" class="ghost">清空项目</button>
+        </div>
+      </div>
+      <div class="section stack">
+        <div class="inline"><strong>素材库</strong><span class="muted">整包导入后可反复调用，不必每句重新选文件</span></div>
+        <div id="assetCounts" class="asset-counts"><span class="asset-count">尚未建立素材库</span></div>
+        <div class="asset-library">
+          <div class="asset-library-row"><strong>背景</strong><select id="libraryBgSelect"></select><button id="btnApplyLibraryBg" class="small">应用到本行</button></div>
+          <div class="asset-library-row"><strong>CG</strong><select id="libraryCgSelect"></select><button id="btnApplyLibraryCg" class="small">应用到本行</button></div>
+          <div class="asset-library-row"><strong>BGM</strong><select id="libraryBgmSelect"></select><button id="btnApplyLibraryBgm" class="small">应用到本行</button></div>
+          <div class="asset-library-row"><strong>SFX</strong><select id="librarySfxSelect"></select><button id="btnApplyLibrarySfx" class="small">应用到本行</button></div>
+        </div>
+        <div id="assetImportSummary" class="import-summary footer-note">可以直接上传整个项目文件夹。推荐目录：characters / backgrounds / cg / bgm / sfx / voice / logs。</div>
+      </div>
+      <div class="section stack">
+        <div class="inline"><strong>项目设置</strong><span class="muted">自动在场 / 舞台布局 / 导出相关</span></div>
+        <div class="row3">
+          <div><label for="bgColor">背景色</label><input id="bgColor" type="color" value="#171924"></div>
+          <div><label for="voiceThreshold">口型阈值</label><input id="voiceThreshold" type="range" min="1" max="9" step="1" value="5"><div class="footer-note">当前：<span id="thresholdLabel">5</span></div></div>
+          <div><label for="maxOnStage">自动在场人数</label><select id="maxOnStage"><option>1</option><option selected>2</option><option>3</option></select></div>
+        </div>
+        <div class="checks">
+          <label><input id="dimOthers" type="checkbox" checked> 非当前说话人压暗</label>
+          <label><input id="showNameTags" type="checkbox" checked> 画面内显示角色名牌</label>
+        </div>
+        <div>
+          <label for="mouthLeadMs">口型画面提前 <span id="mouthLeadLabel">66 ms</span></label>
+          <input id="mouthLeadMs" type="range" min="0" max="200" step="1" value="66">
+          <div class="footer-note">仅改变口型显示时机，不移动音频。精确 timing 与 VAD 都会应用。</div>
+        </div>
+        <div>
+          <label for="bgFile">背景图（可选）</label>
+          <input id="bgFile" type="file" accept="image/*">
+        </div>
+        <div class="row">
+          <div>
+            <label for="bgmFile">BGM（工程级，可选）</label>
+            <input id="bgmFile" type="file" accept="audio/*">
+            <div id="bgmStatus" class="footer-note">未绑定 BGM。</div>
+          </div>
+          <div>
+            <label for="bgmVolume">BGM 音量 <span id="bgmVolumeLabel">24%</span></label>
+            <input id="bgmVolume" type="range" min="0" max="100" value="24">
+            <label for="sfxVolume" style="margin-top:8px">全局 SFX 音量 <span id="sfxVolumeLabel">70%</span></label>
+            <input id="sfxVolume" type="range" min="0" max="100" value="70">
+          </div>
+        </div>
+      </div>
+      <div class="section stack">
+        <div class="inline"><strong>工程文件</strong></div>
+        <div class="toolbar">
+          <button id="btnSaveProject">保存工程 JSON</button>
+          <button id="btnExportYmm" class="ghost">导出 YMM4 台本</button>
+          <button id="btnExportCsv" class="ghost">导出 CSV 台本</button>
+          <button id="btnExportCompiled" class="ghost">导出演出 JSON</button>
+          <label class="ghost small" style="display:inline-flex;align-items:center;gap:6px;padding:8px 12px;cursor:pointer">
+            读取工程 JSON <input id="projectFile" type="file" accept="application/json" style="display:none">
+          </label>
+        </div>
+        <div class="footer-note">工程会内嵌背景图、角色图、逐句音频，方便直接继续编辑。</div>
+      </div>
+      <div class="section stack">
+        <div class="inline"><strong>角色</strong><span id="charCount" class="muted">0 个</span></div>
+        <div id="characterList" class="char-list"></div>
+        <button id="btnAddCharacter">+ 新角色</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel main-preview">
+    <div class="panel-head">
+      <div>
+        <h2>预览</h2>
+        <div id="activeStageInfo" class="kicker">当前在场：-</div>
+      </div>
+      <div class="preview-toolbar">
+        <span id="previewTime" class="badge mono">0.00 / 0.00</span>
+        <span id="previewType" class="badge">-</span>
+      </div>
+    </div>
+    <div class="canvas-wrap"><canvas id="previewCanvas" width="1280" height="720"></canvas></div>
+    <div class="controls">
+      <input id="seek" type="range" min="0" max="1000" value="0">
+      <div class="preview-toolbar">
+        <button id="btnPlayLine" class="primary">▶ 本句</button>
+        <button id="btnPlayAll">▶ 全段</button>
+        <button id="btnStop" class="ghost">■ 停止</button>
+        <div class="grow"></div>
+        <button id="btnExport">导出 WebM</button>
+      </div>
+      <div id="exportProgress" class="stack" style="display:none">
+        <div class="progress"><div id="progressBar"></div></div>
+        <div id="progressText" class="footer-note">准备中…</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>剧本 / 检视器</h2>
+        <div class="kicker">单句编辑；口型数据从台词派生，不再单独维护口型时间轴</div>
+      </div>
+      <span id="lineCount" class="badge">0 条</span>
+    </div>
+    <div class="panel-body stack">
+      <div class="toolbar">
+        <button id="btnAddLine">+ 台词</button>
+        <button id="btnAddScene">+ Scene</button>
+        <button id="btnDuplicateLine">复制当前</button>
+        <button id="btnExportScript" class="ghost">导出脚本</button>
+        <button id="btnDeleteLine" class="danger">删除当前</button>
+      </div>
+      <div id="scriptList" class="script-list"></div>
+      <div class="section stack">
+        <div class="inline"><strong>当前行编辑</strong><span id="lineHint" class="muted">请选择一行</span></div>
+        <div class="section stack" style="padding:10px">
+          <div class="inline"><strong>脚本结构</strong><span class="footer-note">标题从本行开始；只影响编辑视图，不增加视频时长</span></div>
+          <div class="structure-grid">
+            <div><label for="editChapterTitle">章节标题（可选）</label><input id="editChapterTitle" type="text" placeholder="例如：Chapter 1 · 地下仓库"></div>
+            <div><label for="editSceneTitle">Scene 标题（可选）</label><input id="editSceneTitle" type="text" placeholder="例如：走廊 / 夜"></div>
+          </div>
+          <div class="quick-action">
+            <div><label for="quickActionType">快速插入演出动作到本行</label><select id="quickActionType"><option value="camera_shake">Camera · 震动</option><option value="camera_zoom">Camera · 缓慢推进</option><option value="camera_focus">Camera · 聚焦说话人</option><option value="fade">Transition · 淡入</option><option value="enter">角色入场</option><option value="exit">角色离场</option><option value="stop_bgm">BGM · 停止</option><option value="clear_cg">CG · 收起</option><option value="clear_bg">BG · 清空</option></select></div>
+            <div><label for="quickActionTarget">角色目标（入/离场时）</label><select id="quickActionTarget"></select></div>
+            <button id="btnInsertAction" class="primary">插入动作</button>
+          </div>
+        </div>
+        <div class="inspector-grid">
+          <div class="row">
+            <div><label for="editSpeaker">角色</label><select id="editSpeaker"></select></div>
+            <div><label for="editType">类型</label><select id="editType"><option value="dialogue">台词</option><option value="dice">骰点</option><option value="system">系统</option><option value="narration">旁白</option></select></div>
+          </div>
+          <div><label for="editText">文本</label><textarea id="editText" style="min-height:110px"></textarea></div>
+          <div class="row3">
+            <div><label for="editDuration">手动时长（秒）</label><input id="editDuration" type="number" step="0.01" min="0.2"></div>
+            <div><label for="editMouth">口型模式</label><select id="editMouth"><option value="auto">自动 VAD</option><option value="cue">精确 timing</option><option value="off">关闭</option></select></div>
+            <div><label for="lineAudio">本句语音（可选）</label><input id="lineAudio" type="file" accept="audio/*"></div>
+          </div>
+          <div id="audioStatus" class="footer-note audio-status">未绑定音频。</div>
+          <div class="row3">
+            <div><label for="editExpression">当前角色表情</label><select id="editExpression"></select></div>
+            <div><label for="lineSfx">本句 SFX（可选）</label><input id="lineSfx" type="file" accept="audio/*"></div>
+            <div><label for="mouthCueFile">精确口型 timing（JSON / LAB）</label><input id="mouthCueFile" type="file" accept=".json,.lab,.txt,application/json,text/plain"></div>
+          </div>
+          <div class="row">
+            <div id="sfxStatus" class="footer-note audio-status">未绑定 SFX。</div>
+            <div id="mouthCueStatus" class="footer-note audio-status">未导入口型 timing；默认使用 VAD。</div>
+          </div>
+          <div class="row">
+            <div>
+              <label for="editStageMode">出场模式</label>
+              <select id="editStageMode"><option value="auto">自动推断</option><option value="custom">手动指定</option></select>
+            </div>
+            <div>
+              <label>当前将显示的角色</label>
+              <div id="stagePreview" class="stage-chips"></div>
+            </div>
+          </div>
+          <div id="customStageWrap" class="section" style="display:none;padding:10px">
+            <div class="footer-note" style="margin-bottom:8px">勾选这一行真正上镜的角色。</div>
+            <div id="customStageChecks" class="checks"></div>
+          </div>
+          <div class="section" style="padding:10px">
+            <div class="inline" style="margin-bottom:8px"><strong>本行站位覆盖</strong><span class="footer-note">Auto 会使用角色默认站位并避开已占槽位</span></div>
+            <div id="stagePositionRows" class="position-rows"></div>
+          </div>
+          <div class="scene-box">
+            <div class="inline"><strong>场景事件</strong><span class="footer-note">只填写变化；背景 / CG / BGM / 入退场会向后继承</span><button id="btnClearSceneEvent" class="small ghost" style="margin-left:auto">清除本行事件</button></div>
+            <div id="sceneStateStatus" class="scene-status">当前场景：继承项目默认状态</div>
+            <div class="scene-grid">
+              <div>
+                <label for="sceneBgAction">背景事件</label>
+                <select id="sceneBgAction"><option value="inherit">继承</option><option value="set">换背景</option><option value="clear">清空背景</option></select>
+                <input id="sceneBgFile" type="file" accept="image/*" style="margin-top:7px">
+                <div id="sceneBgStatus" class="footer-note">本行不改变背景。</div>
+              </div>
+              <div>
+                <label for="sceneCgAction">CG 事件</label>
+                <select id="sceneCgAction"><option value="inherit">继承</option><option value="set">显示 / 更换 CG</option><option value="clear">收起 CG</option></select>
+                <input id="sceneCgFile" type="file" accept="image/*" style="margin-top:7px">
+                <div id="sceneCgStatus" class="footer-note">本行不改变 CG。</div>
+              </div>
+              <div>
+                <label for="sceneBgmAction">BGM 事件</label>
+                <select id="sceneBgmAction"><option value="inherit">继承</option><option value="set">切换 BGM</option><option value="stop">停止 BGM</option></select>
+                <input id="sceneBgmFile" type="file" accept="audio/*" style="margin-top:7px">
+                <div id="sceneBgmStatus" class="footer-note">本行不改变 BGM。</div>
+              </div>
+              <div>
+                <label for="sceneCamera">本行镜头</label>
+                <select id="sceneCamera"><option value="none">无</option><option value="zoom">缓慢推进</option><option value="shake">震动</option><option value="focus">聚焦当前说话人</option></select>
+                <label for="sceneTransition" style="margin-top:8px">切换方式</label>
+                <select id="sceneTransition"><option value="cut">直接切</option><option value="fade">淡入</option></select>
+              </div>
+            </div>
+            <div class="scene-stage-grid">
+              <div><label>从本行起入场</label><div id="sceneEnterChecks" class="checks"></div></div>
+              <div><label>从本行起离场</label><div id="sceneExitChecks" class="checks"></div></div>
+            </div>
+            <div class="footer-note">一旦使用过入 / 离场事件，舞台会进入“持续 roster”模式；之后角色会保持在场，直到明确离场。单行“手动指定”仍可临时覆盖。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+<div id="toast" class="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+const uid = p => p + '_' + Math.random().toString(36).slice(2,10);
+const clamp = (n,min,max) => Math.min(max,Math.max(min,n));
+const PAUSE_BETWEEN = 0.18;
+const VOICE_THRESH_MULTS={1:.03,2:.045,3:.06,4:.07,5:.08,6:.095,7:.11,8:.13,9:.16};
+
+const project={
+  version:'0.7',
+  characters:[],
+  lines:[],
+  assets:{background:null,bgmData:null,bgmName:''},
+  library:{backgrounds:[],cg:[],bgm:[],sfx:[],unbound:[]},
+  settings:{bgColor:'#171924',voiceThreshold:5,maxOnStage:2,dimOthers:true,showNameTags:true,bgmVolume:.24,sfxVolume:.70,mouthLeadMs:66}
+};
+const runtime={
+  selectedLineId:null,
+  selectedCharId:null,
+  audioCtx:null,
+  playback:null,
+  imageCache:new Map(),
+  bgImage:null,
+  bgmBuffer:null,
+  exportBusy:false
+};
+
+function toast(msg,type=''){const el=$('#toast');el.textContent=msg;el.className='toast show '+type;clearTimeout(toast._t);toast._t=setTimeout(()=>el.className='toast',2600)}
+function safeText(s){return (s??'').toString().replace(/\u00a0/g,' ').trim()}
+function hashString(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
+function colorForName(name){const colors=['#8b7cf0','#57b8a9','#d08a62','#6e9bd1','#c46fa6','#b2a35d','#6fb276','#d06f78','#4fc3f7','#9ccc65'];return colors[hashString(name)%colors.length]}
+function initials(name){const s=safeText(name);return (Array.from(s).slice(0,2).join('')||'?').toUpperCase()}
+function estimateDuration(text){const s=safeText(text);if(!s)return 1.2;const cjk=(s.match(/[\u3400-\u9fff]/g)||[]).length;const words=(s.replace(/[\u3400-\u9fff]/g,' ').match(/[A-Za-z0-9]+/g)||[]).length;const punct=(s.match(/[，。！？,.!?;；:：…—]/g)||[]).length;return clamp(cjk*.17+words*.33+punct*.11+.68,1.0,16)}
+function escapeHtml(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function escapeAttr(s){return String(s??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;')}
+function getChar(id){return project.characters.find(c=>c.id===id)}
+function getLine(id){return project.lines.find(l=>l.id===id)}
+function selectedLine(){return getLine(runtime.selectedLineId) || project.lines[0] || null}
+function selectedChar(){return getChar(runtime.selectedCharId) || project.characters[0] || null}
+function inferCharKind(name){const n=safeText(name).toLowerCase();if(!n)return 'npc';if(/^(system|dicebot|bot|旁白系统|系统)$/.test(n))return 'system';if(/^(kp|gm|dm|keeper|主持|旁白)$/.test(n))return 'kp';return 'normal'}
+
+function makeCharacter(name){
+  const kind=inferCharKind(name);
+  return {id:uid('char'),name:safeText(name)||'新角色',color:colorForName(name||'新角色'),kind,showOnStage:kind==='normal',defaultPosition:'auto',images:{idle:null,open:null,blink:null},expressions:{}};
+}
+function normalizeCharacter(c){
+  c.images=c.images||{idle:null,open:null,blink:null};
+  c.expressions=c.expressions||{};
+  c.defaultPosition=c.defaultPosition||'auto';
+  c.kind=c.kind||inferCharKind(c.name);
+  if(typeof c.showOnStage!=='boolean')c.showOnStage=c.kind==='normal';
+  return c;
+}
+function expressionNames(c){return ['default',...Object.keys(c?.expressions||{})]}
+function expressionLabel(name){return name==='default'?'默认':name}
+function expressionOptions(c,selected){return expressionNames(c).map(n=>`<option value="${escapeAttr(n)}" ${n===selected?'selected':''}>${escapeHtml(expressionLabel(n))}</option>`).join('')}
+function getExpressionAssets(c,name){
+  if(!c)return {idle:null,open:null,blink:null};
+  if(!name||name==='default')return c.images||{};
+  return c.expressions?.[name] || {idle:null,open:null,blink:null};
+}
+function ensureCharacterByName(name){
+  const key=safeText(name)||'未知';
+  let c=project.characters.find(x=>x.name===key);
+  if(!c){c=makeCharacter(key);project.characters.push(c)}
+  return c;
+}
+function parseDiceMeta(text){
+  const src=safeText(text);if(!src)return null;
+  const expr=(src.match(/\b\d+d\d+(?:[+-]\d+)?(?:\s*[x×*]\s*\d+)?\b/i)||[])[0] || '';
+  const pair=src.match(/(?:=|：|:)?\s*(\d{1,3})\s*[\/／]\s*(\d{1,3})/);
+  const outcome=(/大成功|critical|crit/i.test(src))?'critical':(/大失败|fumble/i.test(src))?'fumble':(/成功|success/i.test(src))?'success':(/失败|fail/i.test(src))?'fail':'';
+  return {expr,result:pair?pair[1]:'',target:pair?pair[2]:'',outcome};
+}
+function detectType(speaker,text){
+  const sp=safeText(speaker).toLowerCase(); const tx=safeText(text);
+  if(/^(system|dicebot|bot|系统)$/.test(sp))return 'system';
+  if(/^(kp|gm|dm|keeper|主持|旁白)$/.test(sp) && /^\s*[（(【\[]?/.test(tx) && /[)）】\]]\s*$/.test(tx))return 'narration';
+  if(/^(旁白|narration)$/.test(sp))return 'narration';
+  if(/\b\d+d\d+/i.test(tx) || /大成功|大失败|成功|失败/.test(tx) && /\d+\s*[\/／]\s*\d+/.test(tx))return 'dice';
+  return 'dialogue';
+}
+function makeLine(speaker,text,type){
+  const c=ensureCharacterByName(speaker);
+  return {id:uid('line'),speakerId:c.id,type:type||detectType(speaker,text),text:safeText(text),chapterTitle:'',sceneTitle:'',duration:null,mouth:'auto',mouthCues:[],expression:'default',audioName:'',audioData:null,audioBuffer:null,voiceRegions:null,sfxName:'',sfxData:null,sfxBuffer:null,stageMode:'auto',stageIds:[],stagePositions:{},sourceSpeaker:safeText(speaker),scene:{bgAction:'inherit',bgData:null,bgName:'',cgAction:'inherit',cgData:null,cgName:'',bgmAction:'inherit',bgmData:null,bgmName:'',bgmBuffer:null,camera:'none',transition:'cut',enterIds:[],exitIds:[]}};
+}
+function normalizeLine(l){
+  l.mouth=l.mouth||'auto'; l.mouthCues=Array.isArray(l.mouthCues)?l.mouthCues:[]; l.expression=l.expression||'default';
+  l.chapterTitle=l.chapterTitle||''; l.sceneTitle=l.sceneTitle||'';
+  l.stageMode=l.stageMode||'auto'; l.stageIds=Array.isArray(l.stageIds)?l.stageIds:[]; l.stagePositions=l.stagePositions||{};
+  l.sfxName=l.sfxName||''; l.sfxData=l.sfxData||null; l.sfxBuffer=null; l.audioBuffer=null;
+  l.scene=l.scene||{};
+  l.scene.bgAction=l.scene.bgAction||'inherit'; l.scene.bgData=l.scene.bgData||null; l.scene.bgName=l.scene.bgName||'';
+  l.scene.cgAction=l.scene.cgAction||'inherit'; l.scene.cgData=l.scene.cgData||null; l.scene.cgName=l.scene.cgName||'';
+  l.scene.bgmAction=l.scene.bgmAction||'inherit'; l.scene.bgmData=l.scene.bgmData||null; l.scene.bgmName=l.scene.bgmName||''; l.scene.bgmBuffer=null;
+  l.scene.camera=l.scene.camera||'none'; l.scene.transition=l.scene.transition||'cut';
+  l.scene.enterIds=Array.isArray(l.scene.enterIds)?l.scene.enterIds:[]; l.scene.exitIds=Array.isArray(l.scene.exitIds)?l.scene.exitIds:[];
+  return l;
+}
+function lineDuration(line){return line?.audioBuffer?.duration || Number(line?.duration) || estimateDuration(line?.text)}
+function typeLabel(t){return ({dialogue:'台词',dice:'骰点',system:'系统',narration:'旁白'})[t]||t}
+function speakerOptions(selected){return project.characters.map(c=>`<option value="${c.id}" ${c.id===selected?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}
+
+function parseTextLog(text){
+  const raw=String(text||'').replace(/\r/g,'').split('\n');
+  const out=[]; let pendingName='';
+  const stripTimestamp=line=>line
+    .replace(/^\s*\[?\d{4}[-\/.年]\d{1,2}[-\/.月]\d{1,2}(?:日)?\s+\d{1,2}:\d{2}(?::\d{2})?\]?\s*/,'')
+    .replace(/^\s*\[?\d{1,2}:\d{2}(?::\d{2})?\]?\s*/,'');
+  for(let i=0;i<raw.length;i++){
+    let line=safeText(raw[i]); if(!line)continue;
+    // QQ/群聊常见：昵称(QQ号) 2026/09/08 21:57:56，下一行为消息
+    let m=line.match(/^(.{1,50}?)(?:\([^)]*\))?\s+\d{4}[\/-]\d{1,2}[\/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?$/);
+    if(m){pendingName=safeText(m[1]);continue}
+    m=line.match(/^(.{1,50}?)\s+\d{1,2}:\d{2}(?::\d{2})?$/);
+    if(m){pendingName=safeText(m[1]);continue}
+    if(pendingName){out.push({speaker:pendingName,text:line});pendingName='';continue}
+    line=stripTimestamp(line);
+    // Cocofolia/导出文本：[main] Name: text
+    m=line.match(/^\[(?:main|info|other|secret|杂谈|情报|主要|メイン|情報|雑談)[^\]]*\]\s*([^:：]{1,50})\s*[:：]\s*(.+)$/i);
+    if(m){out.push({speaker:safeText(m[1]),text:safeText(m[2])});continue}
+    // <Name> text / ＜Name＞ text
+    m=line.match(/^[<＜]([^>＞]{1,50})[>＞]\s*(.+)$/);
+    if(m){out.push({speaker:safeText(m[1]),text:safeText(m[2])});continue}
+    // 常规 Name: text
+    m=line.match(/^([^:：]{1,50})\s*[:：]\s*(.+)$/);
+    if(m){out.push({speaker:safeText(m[1]),text:safeText(m[2])});continue}
+    // 【Name】 text / [Name] text
+    m=line.match(/^【(.+?)】\s*(.+)$/) || line.match(/^\[([^\]]+?)\]\s*(.+)$/);
+    if(m){out.push({speaker:safeText(m[1]),text:safeText(m[2])});continue}
+    // 最后兜底：上一条续行；完全没有上一条则作为旁白
+    if(out.length)out[out.length-1].text += '\n'+line; else out.push({speaker:'旁白',text:line})
+  }
+  return out.filter(r=>safeText(r.speaker)&&safeText(r.text));
+}
+function isDiceBotName(name){return /dicebot|sealdice|海豹|骰娘|骰子|塔骰|bot|system/i.test(safeText(name))}
+function extractDiceActor(text){
+  const src=safeText(text); let m=src.match(/[<＜【]([^>＞】]{1,30})[>＞】]\s*的/) || src.match(/(?:^|\s)([^\s，。,:：]{1,20})的.{0,16}(?:检定|判定)/);
+  return m?safeText(m[1]):'';
+}
+
+function parseCocofoliaHtml(html){
+  const doc=new DOMParser().parseFromString(html,'text/html');
+  const out=[];
+  const semantic=Array.from(doc.querySelectorAll('.player, li.player'));
+  if(semantic.length){
+    for(const node of semantic){
+      const speaker=node.querySelector('.speaker-text')?.textContent || node.querySelector('.speaker')?.textContent || node.querySelector('b')?.textContent || '未知';
+      let text=node.querySelector('.player-message')?.textContent;
+      if(!text){const copy=node.cloneNode(true);copy.querySelectorAll('.speaker,.speaker-text,b').forEach(n=>n.remove());text=copy.textContent}
+      text=safeText(text); if(text) out.push({speaker:safeText(speaker),text});
+    }
+    if(out.length) return out;
+  }
+  for(const p of Array.from(doc.querySelectorAll('p'))){
+    const spans=Array.from(p.querySelectorAll(':scope > span'));
+    if(spans.length>=3){
+      const speaker=safeText(spans[1].textContent);
+      const text=safeText(spans.slice(2).map(s=>s.textContent).join(''));
+      if(speaker&&text)out.push({speaker,text});
+      continue;
+    }
+    const b=p.querySelector('b');
+    if(b){const speaker=safeText(b.textContent);const copy=p.cloneNode(true);copy.querySelector('b')?.remove();const text=safeText(copy.textContent);if(speaker&&text)out.push({speaker,text})}
+  }
+  return out;
+}
+
+
+function parseJsonLog(text){
+  let data; try{data=JSON.parse(text)}catch{return []}
+  // Replay Lab 工程 JSON 不作为 Log 误导入。
+  if(data && typeof data==='object' && Array.isArray(data.characters) && Array.isArray(data.lines) && String(data.version||'').match(/^0\./)) return [];
+  let rows=data;
+  if(!Array.isArray(rows) && data && typeof data==='object'){
+    rows=data.messages || data.logs || data.records || data.chat || data.items || data.data || [];
+  }
+  if(!Array.isArray(rows)) return [];
+  const out=[];
+  for(const item of rows){
+    if(typeof item==='string'){
+      const parsed=parseTextLog(item); out.push(...parsed); continue;
+    }
+    if(!item || typeof item!=='object') continue;
+    const speaker=safeText(item.speaker ?? item.name ?? item.character ?? item.userName ?? item.username ?? item.user ?? item.author ?? item.sender ?? item.from);
+    let body=item.text ?? item.message ?? item.content ?? item.body ?? item.value;
+    if(body && typeof body==='object') body=body.text ?? body.content ?? JSON.stringify(body);
+    const msg=safeText(body);
+    if(speaker && msg) out.push({speaker,text:msg});
+  }
+  return out;
+}
+function supportedLogFile(file){
+  const name=(file?.name||'').toLowerCase();
+  return /\.(txt|log|html?|json)$/.test(name);
+}
+function naturalPath(a,b){
+  const pa=(a.webkitRelativePath||a.name||''); const pb=(b.webkitRelativePath||b.name||'');
+  return pa.localeCompare(pb,undefined,{numeric:true,sensitivity:'base'});
+}
+function chapterFromFile(file){
+  const rel=(file.webkitRelativePath||file.name||'Log').replace(/\\/g,'/');
+  return rel.replace(/\.(txt|log|html?|json)$/i,'');
+}
+async function parseLogFile(file){
+  const text=await fileToText(file); const name=(file.name||'').toLowerCase();
+  if(/\.html?$/.test(name)) return parseCocofoliaHtml(text);
+  if(/\.json$/.test(name)){
+    const rows=parseJsonLog(text);
+    if(rows.length) return rows;
+    // 某些工具把纯文本塞在 JSON 扩展名中；只有 JSON 解析失败时才文本兜底。
+    try{JSON.parse(text); return []}catch{return parseTextLog(text)}
+  }
+  return parseTextLog(text);
+}
+async function importLogFileBatch(fileList){
+  const all=Array.from(fileList||[]); const files=all.filter(supportedLogFile).sort(naturalPath);
+  if(!files.length){toast('文件夹里没有支持的 Log 文件','error'); $('#logImportStatus').textContent=`扫描 ${all.length} 个文件，没有找到 TXT / LOG / HTML / JSON。`; return}
+  const groups=[]; const skipped=[];
+  $('#logImportStatus').textContent=`正在读取 ${files.length} 个 Log 文件…`;
+  for(const file of files){
+    try{
+      const records=await parseLogFile(file);
+      if(records.length) groups.push({title:chapterFromFile(file),records,file});
+      else skipped.push(file.webkitRelativePath||file.name);
+    }catch(err){console.warn('log import failed',file.name,err); skipped.push((file.webkitRelativePath||file.name)+'（读取失败）')}
+  }
+  if(!groups.length){toast('没有从这些文件里识别到台词','error'); $('#logImportStatus').textContent=`读取了 ${files.length} 个候选文件，但没有识别到有效台词。`; return}
+  importRecordGroups(groups);
+  const lines=groups.reduce((n,g)=>n+g.records.length,0); const ignored=all.length-files.length;
+  $('#logImportStatus').textContent=`已导入 ${groups.length} 个 Log 文件，共 ${lines} 条记录。忽略 ${ignored} 个非 Log 文件${skipped.length?`；另有 ${skipped.length} 个候选文件未识别`:''}。`;
+}
+function importRecordGroups(groups){
+  const valid=(groups||[]).filter(g=>Array.isArray(g.records)&&g.records.length);
+  if(!valid.length){toast('没有识别到有效台词','error');return}
+  project.characters=[]; project.lines=[];
+  for(const group of valid){
+    let first=true;
+    for(const r of group.records){
+      const type=detectType(r.speaker,r.text); let speaker=r.speaker;
+      if(type==='dice'&&isDiceBotName(r.speaker)){const actor=extractDiceActor(r.text);if(actor)speaker=actor}
+      const line=makeLine(speaker,r.text,type); line.sourceSpeaker=r.speaker;
+      if(first){line.chapterTitle=group.title||''; first=false}
+      project.lines.push(line);
+    }
+  }
+  runtime.selectedLineId=project.lines[0]?.id||null; runtime.selectedCharId=project.characters[0]?.id||null; renderAll();
+  toast(`已导入 ${valid.length} 个文件 · ${project.lines.length} 条台词 · ${project.characters.length} 个角色`,'ok');
+}
+
+
+function emptyLibrary(){return {backgrounds:[],cg:[],bgm:[],sfx:[],unbound:[]}}
+function normalizeKey(s){return String(s||'').toLowerCase().normalize('NFKC').replace(/\.[^.]+$/,'').replace(/[\s_\-\.\[\]()（）【】]+/g,'')}
+function filePath(file){return (file.webkitRelativePath||file.name||'').replace(/\\/g,'/')}
+function isImageFile(file){return /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file.name||'')}
+function isAudioFile(file){return /\.(wav|mp3|ogg|m4a|aac|flac|webm)$/i.test(file.name||'')}
+function classifyMediaPath(file){
+  const p=filePath(file).toLowerCase();
+  if(isImageFile(file)){
+    if(/(^|\/)(cg|cgs|illustration|illustrations|插图|插畫|事件图|事件圖)(\/|$)/i.test(p))return 'cg';
+    if(/(^|\/)(bg|background|backgrounds|背景|场景|場景)(\/|$)/i.test(p))return 'backgrounds';
+  }
+  if(isAudioFile(file)){
+    if(/(^|\/)(bgm|music|音乐|音樂)(\/|$)/i.test(p))return 'bgm';
+    if(/(^|\/)(sfx|se|sound|sounds|音效)(\/|$)/i.test(p))return 'sfx';
+  }
+  return '';
+}
+function characterMatchForFile(file){
+  const p=normalizeKey(filePath(file));
+  let best=null,bestLen=0;
+  for(const c of project.characters){const key=normalizeKey(c.name);if(key && key.length>=2 && p.includes(key) && key.length>bestLen){best=c;bestLen=key.length}}
+  return best;
+}
+function imageSlotFromName(file){
+  const n=normalizeKey(file.name);
+  if(/blink|eyeclose|eyesclosed|closeeye|闭眼|閉眼|眨眼/.test(n))return 'blink';
+  if(/mouthopen|openmouth|talk|speaking|open|张嘴|張嘴|开口|開口/.test(n))return 'open';
+  if(/idle|base|default|normal|stand|standing|立绘|立繪|通常/.test(n))return 'idle';
+  return '';
+}
+function expressionFromAssetPath(file,char,slot){
+  const rel=filePath(file).replace(/\\/g,'/'); const stem=(file.name||'').replace(/\.[^.]+$/,'');
+  const ck=normalizeKey(char.name); let raw=stem;
+  raw=raw.replace(new RegExp(char.name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'ig'),'');
+  raw=raw.replace(/(idle|base|default|normal|stand|standing|blink|eye[_ -]?close|mouth[_ -]?open|open|talk|speaking|立绘|立繪|闭眼|閉眼|眨眼|张嘴|張嘴)/ig,'');
+  raw=raw.replace(/^[_\-\.\s]+|[_\-\.\s]+$/g,'');
+  const parts=rel.split('/'); const charIdx=parts.findIndex(x=>normalizeKey(x)===ck); if(charIdx>=0 && charIdx+1<parts.length-1){const folder=parts[charIdx+1];if(!/^(default|base|images?|sprites?|立绘|立繪)$/i.test(folder))raw=folder}
+  const key=safeText(raw); return key && normalizeKey(key)!==ck ? key : 'default';
+}
+async function addLibraryAsset(bucket,file){
+  const data=await fileToDataURL(file); const item={id:uid('asset'),name:file.name,path:filePath(file),data}; project.library[bucket].push(item); return item;
+}
+function librarySelectOptions(items,placeholder='— 无 —'){return `<option value="">${placeholder}</option>`+(items||[]).map(x=>`<option value="${x.id}">${escapeHtml(x.path||x.name)}</option>`).join('')}
+function findLibraryItem(bucket,id){return (project.library?.[bucket]||[]).find(x=>x.id===id)}
+function renderAssetLibrary(){
+  project.library=project.library||emptyLibrary(); const L=project.library;
+  $('#assetCounts').innerHTML=[['背景',L.backgrounds.length],['CG',L.cg.length],['BGM',L.bgm.length],['SFX',L.sfx.length],['未绑定',L.unbound.length]].map(([n,v])=>`<span class="asset-count">${n} ${v}</span>`).join('');
+  $('#libraryBgSelect').innerHTML=librarySelectOptions(L.backgrounds); $('#libraryCgSelect').innerHTML=librarySelectOptions(L.cg); $('#libraryBgmSelect').innerHTML=librarySelectOptions(L.bgm); $('#librarySfxSelect').innerHTML=librarySelectOptions(L.sfx);
+}
+async function bindVoiceFileByIndex(file){
+  const stem=(file.name||'').replace(/\.[^.]+$/,''); const m=stem.match(/^\s*(\d{1,5})(?:[_\- .]|$)/); if(!m)return false;
+  const idx=Number(m[1])-1; if(idx<0||idx>=project.lines.length)return false; const line=project.lines[idx];
+  const data=await fileToDataURL(file); try{line.audioName=file.name;line.audioData=data;line.audioBuffer=await decodeAudioDataUrl(data);line.voiceRegions=analyzeAudio(line.audioBuffer);line.duration=null;return true}catch(e){console.warn('voice bind failed',file.name,e);return false}
+}
+async function importWholeProjectFolder(fileList){
+  const all=Array.from(fileList||[]).sort(naturalPath); if(!all.length)return;
+  $('#logImportStatus').textContent=`正在扫描整个项目文件夹：${all.length} 个文件…`; project.library=emptyLibrary();
+  const logFiles=all.filter(supportedLogFile); const groups=[];
+  for(const file of logFiles){try{const records=await parseLogFile(file);if(records.length)groups.push({title:chapterFromFile(file),records,file})}catch(e){console.warn(e)}}
+  if(groups.length) importRecordGroups(groups); else if(!project.lines.length) toast('项目文件夹里没有识别到 Log；仍会建立素材库','error');
+  let charBound=0,voiceBound=0,libCount=0,ignored=0;
+  for(const file of all){
+    if(supportedLogFile(file))continue;
+    const p=filePath(file).toLowerCase();
+    if(isImageFile(file)){
+      const char=characterMatchForFile(file); const slot=char?imageSlotFromName(file):'';
+      if(char){
+        const expr=expressionFromAssetPath(file,char,slot||'idle'); const data=await fileToDataURL(file); const useSlot=slot||'idle';
+        if(expr==='default'){if(!char.images[useSlot] || slot)char.images[useSlot]=data;else project.library.unbound.push({name:file.name,path:filePath(file),data,type:'image'})}
+        else {char.expressions[expr]=char.expressions[expr]||{idle:null,open:null,blink:null};char.expressions[expr][useSlot]=data}
+        charBound++; continue;
+      }
+      const bucket=classifyMediaPath(file); if(bucket){await addLibraryAsset(bucket,file);libCount++;continue}
+      const data=await fileToDataURL(file);project.library.unbound.push({name:file.name,path:filePath(file),data,type:'image'});continue;
+    }
+    if(isAudioFile(file)){
+      if(/(^|\/)(voice|voices|tts|配音|语音|語音)(\/|$)/i.test(p) || /^\d{1,5}[_\- .]/.test(file.name||'')){if(await bindVoiceFileByIndex(file)){voiceBound++;continue}}
+      const bucket=classifyMediaPath(file); if(bucket){await addLibraryAsset(bucket,file);libCount++;continue}
+      const data=await fileToDataURL(file);project.library.unbound.push({name:file.name,path:filePath(file),data,type:'audio'});continue;
+    }
+    ignored++;
+  }
+  if(project.library.backgrounds.length===1 && !project.assets.background){project.assets.background=project.library.backgrounds[0].data;runtime.bgImage=await loadImage(project.assets.background)}
+  if(project.library.bgm.length===1 && !project.assets.bgmData){const a=project.library.bgm[0];project.assets.bgmData=a.data;project.assets.bgmName=a.name;try{runtime.bgmBuffer=await decodeAudioDataUrl(a.data)}catch{}}
+  renderAssetLibrary();renderAll();syncSettingsUI();
+  const summary=`Log：${groups.length} 个文件 / ${project.lines.length} 条\n角色图自动绑定：${charBound}\n逐句语音自动绑定：${voiceBound}\n素材库：${libCount}（背景 ${project.library.backgrounds.length} / CG ${project.library.cg.length} / BGM ${project.library.bgm.length} / SFX ${project.library.sfx.length}）\n未自动绑定：${project.library.unbound.length}；忽略其他文件：${ignored}`;
+  $('#assetImportSummary').textContent=summary; $('#logImportStatus').textContent='整个项目文件夹已扫描并建立素材绑定。'; toast('项目文件夹导入完成','ok');
+}
+function downloadText(filename,text,type='text/plain;charset=utf-8'){const blob=new Blob([text],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1200)}
+function exportYmmScript(){const rows=project.lines.map(l=>`${getChar(l.speakerId)?.name||'未知'}「${String(l.text||'').replace(/\n/g,' ')}」`);downloadText('replay-ymm4-script.txt',rows.join('\n'));toast('已导出 YMM4 台本','ok')}
+function csvCell(v){const s=String(v??'');return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}
+function exportCsvScript(){const rows=[['Character','Dialogue'],...project.lines.map(l=>[getChar(l.speakerId)?.name||'未知',l.text])];downloadText('replay-script.csv','\ufeff'+rows.map(r=>r.map(csvCell).join(',')).join('\n'),'text/csv;charset=utf-8');toast('已导出 CSV 台本','ok')}
+function compilePerformanceJson(){
+  return {format:'ReplayLabPerformance',version:'0.7',settings:project.settings,characters:project.characters.map(c=>({id:c.id,name:c.name,color:c.color,defaultPosition:c.defaultPosition,kind:c.kind})),lines:project.lines.map((l,i)=>{const state=getSceneStateAt(i),visible=getVisibleCharIds(l,i),slots=computeStageSlots(l,i,visible);return {index:i+1,id:l.id,speaker:getChar(l.speakerId)?.name||'未知',text:l.text,type:l.type,duration:lineDuration(l),chapter:l.chapterTitle||'',sceneTitle:l.sceneTitle||'',expression:getExpressionForCharAt(i,l.speakerId),stage:visible.map(id=>({name:getChar(id)?.name||id,position:slots[id]||'auto'})),scene:{background:state.backgroundName||null,cg:state.cgName||null,bgm:state.bgmName||null,camera:l.scene?.camera||'none',transition:l.scene?.transition||'cut'},mouthCues:l.mouthCues||[]}})};
+}
+function exportCompiledJson(){downloadText('replay-performance.json',JSON.stringify(compilePerformanceJson(),null,2),'application/json');toast('已导出演出 JSON','ok')}
+async function applyLibraryAsset(bucket,selectId){
+  const line=selectedLine(); if(!line){toast('先选择一条台词','error');return} const item=findLibraryItem(bucket,$(selectId).value);if(!item){toast('先在素材库选择素材','error');return}
+  if(bucket==='backgrounds'){line.scene.bgAction='set';line.scene.bgData=item.data;line.scene.bgName=item.name}
+  else if(bucket==='cg'){line.scene.cgAction='set';line.scene.cgData=item.data;line.scene.cgName=item.name}
+  else if(bucket==='bgm'){line.scene.bgmAction='set';line.scene.bgmData=item.data;line.scene.bgmName=item.name;try{line.scene.bgmBuffer=await decodeAudioDataUrl(item.data)}catch{}}
+  else if(bucket==='sfx'){line.sfxData=item.data;line.sfxName=item.name;try{line.sfxBuffer=await decodeAudioDataUrl(item.data)}catch{}}
+  renderScript();renderInspector();renderCurrentFrame();toast('素材已应用到当前行','ok')
+}
+
+async function fileToDataURL(file){return new Promise((resolve,reject)=>{const fr=new FileReader();fr.onload=()=>resolve(fr.result);fr.onerror=reject;fr.readAsDataURL(file)})}
+async function fileToText(file){return new Promise((resolve,reject)=>{const fr=new FileReader();fr.onload=()=>resolve(fr.result);fr.onerror=reject;fr.readAsText(file)})}
+async function ensureAudioCtx(){if(!runtime.audioCtx)runtime.audioCtx=new (window.AudioContext||window.webkitAudioContext)();if(runtime.audioCtx.state==='suspended')await runtime.audioCtx.resume();return runtime.audioCtx}
+async function decodeAudioDataUrl(dataUrl){const ctx=await ensureAudioCtx();const res=await fetch(dataUrl);const arr=await res.arrayBuffer();return await ctx.decodeAudioData(arr.slice(0))}
+function loadImage(src){if(!src)return Promise.resolve(null);if(runtime.imageCache.has(src))return runtime.imageCache.get(src);const p=new Promise(resolve=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=()=>resolve(null);im.src=src});runtime.imageCache.set(src,p);return p}
+
+function analyzeAudio(buffer){
+  const data=buffer.getChannelData(0);const sr=buffer.sampleRate;
+  const windowSize=Math.floor(sr*0.02),hopSize=Math.floor(sr*0.01),energies=[];
+  for(let i=0;i<data.length-windowSize;i+=hopSize){let sum=0;for(let j=0;j<windowSize;j++)sum += data[i+j]**2;energies.push(Math.sqrt(sum/windowSize))}
+  const sliderVal=Number(project.settings.voiceThreshold)||5; const mult=VOICE_THRESH_MULTS[sliderVal] || .08;
+  const nonZero=energies.filter(x=>x>0).sort((a,b)=>a-b); const globalMax=nonZero[nonZero.length-1]||1; const globalMedian=nonZero[Math.floor(nonZero.length*.5)]||0;
+  const hardFloor=globalMax*.003; const globalThresh=Math.max(globalMedian*mult,globalMax*.005);
+  const localWindowFrames=Math.floor(1.5/.01);
+  const voiced=energies.map((e,i)=>{
+    if(e<hardFloor)return false; const from=Math.max(0,i-localWindowFrames),to=Math.min(energies.length-1,i+localWindowFrames); let localMax=0;
+    for(let k=from;k<=to;k++) if(energies[k]>localMax) localMax=energies[k];
+    const localThresh=localMax*mult; return e>Math.min(localThresh,globalThresh);
+  });
+  const smoothed=voiced.slice(); for(let i=2;i<voiced.length-2;i++){const w=voiced[i-2]+voiced[i-1]+voiced[i]+voiced[i+1]+voiced[i+2]; smoothed[i]=w>=3}
+  const regions=[]; let regionStart=0,cur=smoothed[0]||false;
+  for(let i=1;i<smoothed.length;i++){if(smoothed[i]!==cur){regions.push({start:regionStart*.01,end:i*.01,voiced:cur});regionStart=i;cur=smoothed[i]}}
+  regions.push({start:regionStart*.01,end:buffer.duration,voiced:cur});
+  const filtered=regions.map(r => (r.voiced && (r.end-r.start)<.04) ? {...r,voiced:false} : r);
+  const merged=[]; for(const r of filtered){if(merged.length && merged[merged.length-1].voiced===r.voiced) merged[merged.length-1].end=r.end; else merged.push({...r})}
+  return merged;
+}
+function parseMouthTimingText(text){
+  const src=String(text||'').trim(); if(!src)return [];
+  try{
+    const obj=JSON.parse(src); const arr=Array.isArray(obj)?obj:(obj.mouthCues||obj.cues||obj.phonemes||obj.items||[]);
+    if(Array.isArray(arr) && arr.length){return arr.map(x=>({start:Number(x.start??x.from??x.begin??0),end:Number(x.end??x.to??x.stop??0),key:String(x.value??x.key??x.phoneme??x.shape??'open')})).filter(x=>Number.isFinite(x.start)&&Number.isFinite(x.end)&&x.end>x.start)}
+  }catch(e){}
+  const rows=[];
+  for(const line of src.split(/\r?\n/)){
+    const m=line.trim().match(/^(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+(\S+)/); if(!m)continue;
+    let a=Number(m[1]),b=Number(m[2]); if(a>100000||b>100000){a/=1e7;b/=1e7} rows.push({start:a,end:b,key:m[3]});
+  }
+  return rows;
+}
+function cueIsOpen(key){return !/^(?:x|idle|closed|close|pau|sil|sp|silence|none)$/i.test(String(key||''))}
+function isVoicedAt(line,t){
+  if(!line || line.mouth==='off')return false;
+  const qt=Math.max(0,t+(Number(project.settings.mouthLeadMs)||0)/1000);
+  if(line.mouth==='cue' && Array.isArray(line.mouthCues) && line.mouthCues.length){const cue=line.mouthCues.find(c=>qt>=c.start&&qt<c.end);return cue?cueIsOpen(cue.key):false}
+  if(line.audioBuffer && Array.isArray(line.voiceRegions)) return line.voiceRegions.some(r=>r.voiced && qt>=r.start && qt<r.end);
+  const dur=lineDuration(line), normalized=dur? qt/dur : 0, src=safeText(line.text), punctuation=(src.match(/[，。！？,.!?;；:：…—]/g)||[]).length;
+  const pace=clamp((src.length-punctuation)/8,1,8), cycle=Math.max(.11,.26-(pace*.015));
+  const gate=Math.sin((normalized*dur/cycle)*Math.PI*2); return gate>.18 && !/[。！？!?…]$/.test(src.slice(Math.max(0,Math.floor(src.length*(normalized-.05)))));
+}
+function isBlinkAt(char,t,line){
+  if(!char?.images?.blink) return false;
+  if(line && isVoicedAt(line,t)) return false;
+  const seed=((hashString(char.id)%1000)/1000)*2.2; const interval=2.6 + (hashString(char.name)%7)*.17; const blinkDur=.18;
+  const phase=(t+seed)%interval; return phase<blinkDur;
+}
+
+function buildSchedule(lines=project.lines){let cursor=0;return lines.map((line,index)=>{const duration=lineDuration(line);const item={line,index,start:cursor,end:cursor+duration,duration};cursor+=duration+(index===lines.length-1?0:PAUSE_BETWEEN);return item})}
+function totalDuration(schedule){return schedule.length ? schedule[schedule.length-1].end : 0}
+function locateSchedule(schedule,t){return schedule.find(s=>t>=s.start&&t<s.end) || (schedule.length ? schedule[schedule.length-1] : null)}
+function getAutoVisibleCharIds(line,index){
+  if(!line)return[];const maxOnStage=Number(project.settings.maxOnStage)||2,ids=[],seen=new Set();
+  for(let i=index;i>=0;i--){const l=project.lines[i],c=getChar(l.speakerId);if(!c||!c.showOnStage)continue;if(!(l.type==='dialogue'||l.type==='dice'))continue;if(!seen.has(c.id)){seen.add(c.id);ids.push(c.id);if(ids.length>=maxOnStage)break}}
+  if(!ids.length){const c=getChar(line.speakerId);if(c?.showOnStage)ids.push(c.id)}return ids.reverse();
+}
+function firstPersistentStageEventIndex(index){for(let i=0;i<=index;i++){const s=project.lines[i]?.scene;if((s?.enterIds?.length||0)||(s?.exitIds?.length||0))return i}return-1}
+function hasPersistentStageEvents(index){return firstPersistentStageEventIndex(index)>=0}
+function getPersistentStageAt(index){
+  const first=firstPersistentStageEventIndex(index);if(first<0)return[];const seedIndex=first-1;const roster=seedIndex>=0?getAutoVisibleCharIds(project.lines[seedIndex],seedIndex).slice():[];
+  const add=id=>{if(getChar(id)&&!roster.includes(id))roster.push(id)};const remove=id=>{const k=roster.indexOf(id);if(k>=0)roster.splice(k,1)};
+  for(let i=first;i<=index;i++){const s=project.lines[i]?.scene||{};(s.exitIds||[]).forEach(remove);(s.enterIds||[]).forEach(add)}return roster;
+}
+function getVisibleCharIds(line,index){if(!line)return[];if(line.stageMode==='custom')return line.stageIds.filter(id=>getChar(id));if(hasPersistentStageEvents(index))return getPersistentStageAt(index);return getAutoVisibleCharIds(line,index)}
+function getExpressionForCharAt(index,charId){for(let i=index;i>=0;i--){const l=project.lines[i];if(l?.speakerId===charId&&l.expression)return l.expression}return 'default'}
+function computeStageSlots(line,index,visibleIds){
+  const preferred=visibleIds.length<=1?['center']:visibleIds.length===2?['left','right']:['left','center','right'];const all=['left','center','right'],used=new Set(),result={},auto=[];
+  for(const id of visibleIds){const c=getChar(id),raw=line?.stagePositions?.[id]||c?.defaultPosition||'auto';if(raw!=='auto'&&all.includes(raw)&&!used.has(raw)){result[id]=raw;used.add(raw)}else auto.push(id)}
+  for(const id of auto){const slot=preferred.find(x=>!used.has(x))||all.find(x=>!used.has(x))||'center';result[id]=slot;used.add(slot)}return result;
+}
+function slotRect(slot,count,w,h){const x=slot==='left'?.22:slot==='right'?.78:.5;return {cx:w*x,maxW:w*(count>=3?.25:.31),maxH:h*.71,floor:h*.88}}
+function getSceneStateAt(index){
+  const state={background:project.assets.background||null,backgroundName:'项目默认背景',cg:null,cgName:'',bgmData:project.assets.bgmData||null,bgmName:project.assets.bgmName||'',bgmBuffer:runtime.bgmBuffer||null};
+  for(let i=0;i<=index;i++){
+    const s=project.lines[i]?.scene||{};
+    if(s.bgAction==='set'&&s.bgData){state.background=s.bgData;state.backgroundName=s.bgName||`第 ${i+1} 行背景`}else if(s.bgAction==='clear'){state.background=null;state.backgroundName=''}
+    if(s.cgAction==='set'&&s.cgData){state.cg=s.cgData;state.cgName=s.cgName||`第 ${i+1} 行 CG`}else if(s.cgAction==='clear'){state.cg=null;state.cgName=''}
+    if(s.bgmAction==='set'&&s.bgmData){state.bgmData=s.bgmData;state.bgmName=s.bgmName||`第 ${i+1} 行 BGM`;state.bgmBuffer=s.bgmBuffer||null}else if(s.bgmAction==='stop'){state.bgmData=null;state.bgmName='';state.bgmBuffer=null}
+  }
+  return state;
+}
+function sceneEventLabels(line){
+  const s=line?.scene||{},a=[];if(s.bgAction==='set')a.push('BG');else if(s.bgAction==='clear')a.push('BG×');if(s.cgAction==='set')a.push('CG');else if(s.cgAction==='clear')a.push('CG×');if(s.bgmAction==='set')a.push('BGM');else if(s.bgmAction==='stop')a.push('BGM×');if(s.enterIds?.length)a.push('入场');if(s.exitIds?.length)a.push('离场');if(s.camera&&s.camera!=='none')a.push('CAM');if(s.transition==='fade')a.push('FADE');return a;
+}
+function sceneHasEvent(line){return sceneEventLabels(line).length>0}
+function buildBgmSegments(schedule){
+  if(!schedule.length)return[];const segments=[];let currentData=project.assets.bgmData||null,currentBuffer=runtime.bgmBuffer||null,currentName=project.assets.bgmName||'',start=0;
+  const push=(end)=>{if(currentBuffer&&end>start)segments.push({start,end,buffer:currentBuffer,name:currentName})};
+  schedule.forEach((seg,j)=>{const s=seg.line.scene||{};if(s.bgmAction==='set'&&s.bgmBuffer){push(seg.start);currentData=s.bgmData;currentBuffer=s.bgmBuffer;currentName=s.bgmName||'';start=seg.start}else if(s.bgmAction==='stop'){push(seg.start);currentData=null;currentBuffer=null;currentName='';start=seg.start}});
+  push(totalDuration(schedule));return segments;
+}
+function outcomeColor(outcome){return ({critical:'#77f0b6',success:'#9fd0ff',fail:'#ef8a8a',fumble:'#ff6d6d'})[outcome] || '#f4d18b'}
+function currentLineIndex(line){return project.lines.findIndex(x=>x.id===line?.id)}
+
+function drawCentered(ctx,w,h,text){ctx.fillStyle='#8d95a6';ctx.font='500 22px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(text,w/2,h/2)}
+function roundRect(ctx,x,y,w,h,r){r=Math.min(r,w/2,h/2);ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath()}
+function measureTextWidth(ctx,text,font){ctx.save();ctx.font=font;const w=ctx.measureText(text).width;ctx.restore();return w}
+function wrapText(ctx,text,x,y,maxW,lineH,maxLines=99,align='left'){
+  const src=String(text??'').replace(/\n/g,' ↵ '), chars=Array.from(src); let line='', lines=[]; ctx.textAlign=align;
+  for(const ch of chars){const test=line+ch;if(ctx.measureText(test).width>maxW&&line){lines.push(line.replace(/ ↵ $/,''));line=ch==='↵'?'':ch;if(lines.length>=maxLines)break}else{line=test;if(ch==='↵'){lines.push(line.replace(/ ↵$/,'').replace(/↵$/,''));line='';if(lines.length>=maxLines)break}}}
+  if(line&&lines.length<maxLines)lines.push(line); if(lines.length===maxLines&&chars.length>lines.join('').length){let s=lines.at(-1);while(ctx.measureText(s+'…').width>maxW&&s.length)s=s.slice(0,-1);lines[lines.length-1]=s+'…'}
+  lines.forEach((ln,i)=>ctx.fillText(ln,x,y+i*lineH)); return lines.length;
+}
+
+function drawDialogueUI(ctx,w,h,line,char,progress,voiced,forExport=false){
+  if(line.type==='system'||line.type==='narration'){
+    ctx.fillStyle='rgba(10,12,17,.82)'; roundRect(ctx,w*.16,h*.34,w*.68,h*.26,18); ctx.fill(); ctx.strokeStyle='rgba(255,255,255,.12)'; ctx.stroke();
+    ctx.fillStyle='#dfe5ef'; ctx.font='600 24px system-ui'; ctx.textBaseline='top'; wrapText(ctx,line.text,w/2,h*.395,w*.56,34,4,'center'); return;
+  }
+  const margin=w*.055,bw=w-margin*2, boxH=line.type==='dice'?h*.27:h*.28, x=margin,y=h-boxH-margin*.58; const accent=char?.color||'#8b7cf0';
+  ctx.fillStyle='rgba(10,12,17,.87)'; roundRect(ctx,x,y,bw,boxH,18); ctx.fill(); ctx.strokeStyle='rgba(255,255,255,.12)'; ctx.lineWidth=1.5; ctx.stroke();
+  const nameW=Math.min(230,Math.max(110,measureTextWidth(ctx,char?.name||'未知','700 16px system-ui')+36));
+  ctx.fillStyle=accent; roundRect(ctx,x+16,y-17,nameW,34,9); ctx.fill(); ctx.fillStyle='#fff'; ctx.font='700 16px system-ui'; ctx.textAlign='left'; ctx.textBaseline='middle'; ctx.fillText(char?.name||'未知',x+30,y);
+  if(line.type==='dice'){
+    const meta=parseDiceMeta(line.text)||{}; ctx.fillStyle='rgba(240,185,91,.12)'; roundRect(ctx,x+20,y+34,bw-40,boxH-58,12); ctx.fill();
+    if(meta.expr){ctx.fillStyle='#f7d895'; ctx.font='700 18px ui-monospace,monospace'; ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillText(meta.expr,x+34,y+46)}
+    if(meta.result&&meta.target){ctx.fillStyle=outcomeColor(meta.outcome); ctx.font='800 34px ui-monospace,monospace'; ctx.textAlign='right'; ctx.textBaseline='top'; ctx.fillText(`${meta.result} / ${meta.target}`,x+bw-34,y+42)}
+    ctx.fillStyle='#f4f6fb'; ctx.font='500 18px system-ui'; ctx.textAlign='left'; ctx.textBaseline='bottom'; wrapText(ctx,line.text,x+34,y+boxH-52,bw-68,26,2,'left');
+  } else {
+    ctx.fillStyle='#f4f6fb'; ctx.font='500 23px system-ui'; ctx.textAlign='left'; ctx.textBaseline='top'; wrapText(ctx,line.text,x+28,y+40,bw-56,33,3,'left');
+  }
+  ctx.fillStyle='rgba(255,255,255,.12)'; roundRect(ctx,x+20,y+boxH-14,bw-40,4,2); ctx.fill();
+  ctx.fillStyle=accent; roundRect(ctx,x+20,y+boxH-14,(bw-40)*clamp(progress,0,1),4,2); ctx.fill();
+  if(!forExport){ctx.fillStyle=voiced?'#78e0bc':'#7b8292';ctx.font='10px ui-monospace,monospace';ctx.textAlign='right';ctx.textBaseline='bottom';ctx.fillText(voiced?'MOUTH OPEN':'MOUTH IDLE',x+bw-20,y+boxH-19)}
+}
+
+async function renderFrame(line,localT=0,progress=0,ctx=null,w=null,h=null,forExport=false){
+  const canvas=$('#previewCanvas');ctx=ctx||canvas.getContext('2d');w=w||canvas.width;h=h||canvas.height;ctx.clearRect(0,0,w,h);
+  const index=line?currentLineIndex(line):-1,scene=index>=0?getSceneStateAt(index):{background:project.assets.background,cg:null};
+  ctx.fillStyle=project.settings.bgColor||'#171924';ctx.fillRect(0,0,w,h);
+  if(scene.background){const bg=await loadImage(scene.background);if(bg){const s=Math.max(w/bg.naturalWidth,h/bg.naturalHeight),dw=bg.naturalWidth*s,dh=bg.naturalHeight*s;ctx.globalAlpha=.62;ctx.drawImage(bg,(w-dw)/2,(h-dh)/2,dw,dh);ctx.globalAlpha=1}}
+  if(scene.cg){const cg=await loadImage(scene.cg);if(cg){const s=Math.min(w/cg.naturalWidth,h/cg.naturalHeight),dw=cg.naturalWidth*s,dh=cg.naturalHeight*s;ctx.save();ctx.globalAlpha=.92;ctx.fillStyle='rgba(0,0,0,.22)';ctx.fillRect(0,0,w,h);ctx.drawImage(cg,(w-dw)/2,(h-dh)/2,dw,dh);ctx.restore()}}
+  const grad=ctx.createLinearGradient(0,0,0,h);grad.addColorStop(0,'rgba(5,6,9,.04)');grad.addColorStop(1,'rgba(5,6,9,.56)');ctx.fillStyle=grad;ctx.fillRect(0,0,w,h);
+  if(!line){drawCentered(ctx,w,h,'导入 Log 或添加台词开始');return}
+  const visibleIds=getVisibleCharIds(line,index),currentId=line.speakerId,placements=computeStageSlots(line,index,visibleIds),camera=line.scene?.camera||'none';
+  ctx.save();
+  if(camera==='shake'){const amp=7*(1-progress);ctx.translate(Math.sin(localT*42)*amp,Math.cos(localT*35)*amp*.65)}
+  else if(camera==='zoom'){const z=1+Math.min(.07,progress*.07);ctx.translate(w/2,h/2);ctx.scale(z,z);ctx.translate(-w/2,-h/2)}
+  for(let i=0;i<visibleIds.length;i++){
+    const id=visibleIds[i],char=getChar(id);if(!char)continue;const rect=slotRect(placements[id]||'center',visibleIds.length,w,h),isCurrent=id===currentId,lineForMouth=isCurrent?line:null,voiced=isCurrent?isVoicedAt(line,localT):false,blink=isBlinkAt(char,localT,lineForMouth);
+    const exprName=getExpressionForCharAt(index,id),assets=getExpressionAssets(char,exprName);let src=assets.idle||char.images.idle;if(voiced){if(exprName==='default'&&char.images.open)src=char.images.open;else if(exprName!=='default'&&assets.open)src=assets.open}if(blink){if(exprName==='default'&&char.images.blink)src=char.images.blink;else if(exprName!=='default'&&assets.blink)src=assets.blink}
+    let alpha=!project.settings.dimOthers||isCurrent?1:.37;if(camera==='focus'&&!isCurrent)alpha*=.42;const scaleBump=isCurrent?1:.95;ctx.save();ctx.globalAlpha=alpha;
+    if(src){const im=await loadImage(src);if(im){const focusScale=camera==='focus'&&isCurrent?1.08:1,scale=Math.min(rect.maxH/im.naturalHeight,rect.maxW/im.naturalWidth)*scaleBump*focusScale,dw=im.naturalWidth*scale,dh=im.naturalHeight*scale,x=rect.cx-dw/2,y=rect.floor-dh;ctx.shadowColor=isCurrent?'rgba(0,0,0,.42)':'rgba(0,0,0,.24)';ctx.shadowBlur=isCurrent?28:18;ctx.drawImage(im,x,y,dw,dh);if(isCurrent){ctx.strokeStyle=(char.color||'#fff')+'55';ctx.lineWidth=3;roundRect(ctx,x-8,y-8,dw+16,dh+16,18);ctx.stroke()}if(project.settings.showNameTags){const nw=Math.max(74,measureTextWidth(ctx,char.name,'700 14px system-ui')+26),ny=rect.floor-26;ctx.fillStyle='rgba(10,12,17,.72)';roundRect(ctx,rect.cx-nw/2,ny,nw,26,9);ctx.fill();ctx.strokeStyle=(char.color||'#8b7cf0')+'88';ctx.stroke();ctx.fillStyle='#fff';ctx.font='700 14px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(char.name,rect.cx,ny+13)}}}
+    else{const r=Math.min(w,h)*.08,y=h*.3;ctx.fillStyle=(char.color||'#888')+'33';ctx.beginPath();ctx.arc(rect.cx,y+r,r,0,Math.PI*2);ctx.fill();ctx.strokeStyle=char.color||'#888';ctx.lineWidth=2;ctx.stroke();ctx.fillStyle='#fff';ctx.font=`700 ${Math.round(r*.56)}px system-ui`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(initials(char.name),rect.cx,y+r);if(project.settings.showNameTags){ctx.fillStyle='#fff';ctx.font='600 13px system-ui';ctx.fillText(char.name,rect.cx,y+r*2+18)}}ctx.restore();
+  }
+  ctx.restore();
+  const speaker=getChar(line.speakerId);drawDialogueUI(ctx,w,h,line,speaker,progress,isVoicedAt(line,localT),forExport);
+  if(line.scene?.transition==='fade'&&localT<.42){ctx.save();ctx.globalAlpha=1-clamp(localT/.42,0,1);ctx.fillStyle='#000';ctx.fillRect(0,0,w,h);ctx.restore()}
+}
+
+async function renderCurrentFrame(){
+  const line=selectedLine(); await renderFrame(line,0,0); $('#previewTime').textContent=`0.00 / ${(line?lineDuration(line):0).toFixed(2)}`; $('#previewType').textContent=line?typeLabel(line.type):'-'; $('#seek').value=0; updateActiveStageInfo(line)
+}
+function updateActiveStageInfo(line){const idx=currentLineIndex(line);const ids=getVisibleCharIds(line,idx);const chars=ids.map(id=>getChar(id)?.name).filter(Boolean);$('#activeStageInfo').textContent='当前在场：'+(chars.length?chars.join(' / '):'—')}
+function stopPlayback(){const p=runtime.playback;if(!p)return;cancelAnimationFrame(p.raf);p.sources?.forEach(s=>{try{s.stop()}catch{}});runtime.playback=null;$('#btnPlayLine').textContent='▶ 本句';$('#btnPlayAll').textContent='▶ 全段';renderCurrentFrame()}
+async function play(lines){
+  stopPlayback();if(!lines.length)return;const schedule=buildSchedule(lines),total=totalDuration(schedule),ctx=await ensureAudioCtx(),base=ctx.currentTime+.06,sources=[];
+  const startSource=(buffer,when,volume=1,loop=false,stopAt=null)=>{if(!buffer)return null;const src=ctx.createBufferSource(),gain=ctx.createGain();src.buffer=buffer;src.loop=loop;gain.gain.value=clamp(volume,0,1);src.connect(gain).connect(ctx.destination);src.start(when);if(stopAt)try{src.stop(stopAt)}catch{}sources.push(src);return src};
+  const fullProject=lines===project.lines||lines.length===project.lines.length; if(fullProject){for(const b of buildBgmSegments(schedule))startSource(b.buffer,base+b.start,project.settings.bgmVolume??.24,true,base+b.end+.03)}else{const idx=currentLineIndex(lines[0]),s=getSceneStateAt(idx);if(s.bgmBuffer)startSource(s.bgmBuffer,base,project.settings.bgmVolume??.24,true,base+total+.03)}
+  for(const s of schedule){if(s.line.audioBuffer)startSource(s.line.audioBuffer,base+s.start,1,false);if(s.line.sfxBuffer)startSource(s.line.sfxBuffer,base+s.start,project.settings.sfxVolume??.7,false)}
+  const wall=performance.now()/1000+.06;runtime.playback={schedule,total,wall,sources,raf:null,lastLineId:null};
+  const tick=async()=>{const p=runtime.playback;if(!p)return;const t=performance.now()/1000-p.wall;if(t<0){p.raf=requestAnimationFrame(tick);return}if(t>=p.total){stopPlayback();return}const seg=locateSchedule(p.schedule,t);if(!seg){stopPlayback();return}const local=clamp(t-seg.start,0,seg.duration);if(p.lastLineId!==seg.line.id){runtime.selectedLineId=seg.line.id;p.lastLineId=seg.line.id;renderScript();renderInspector()}await renderFrame(seg.line,local,local/seg.duration);$('#previewTime').textContent=`${t.toFixed(2)} / ${p.total.toFixed(2)}`;$('#previewType').textContent=typeLabel(seg.line.type);$('#seek').value=Math.round(t/p.total*1000);updateActiveStageInfo(seg.line);p.raf=requestAnimationFrame(tick)};runtime.playback.raf=requestAnimationFrame(tick);
+}
+
+async function exportProjectVideo(){
+  if(runtime.exportBusy)return;if(!project.lines.length){toast('没有可导出的剧本','error');return}
+  runtime.exportBusy=true;stopPlayback();$('#exportProgress').style.display='grid';$('#progressBar').style.width='0%';$('#progressText').textContent='准备音轨与画面…';$('#btnExport').disabled=true;
+  try{
+    const schedule=buildSchedule(project.lines),total=totalDuration(schedule),canvas=document.createElement('canvas');canvas.width=1280;canvas.height=720;const cctx=canvas.getContext('2d');const stream=canvas.captureStream(30);
+    const actx=new (window.AudioContext||window.webkitAudioContext)();const dest=actx.createMediaStreamDestination();const sources=[];const base=actx.currentTime+.12;
+    const startSource=(buffer,when,volume=1,loop=false,stopAt=null)=>{if(!buffer)return;const src=actx.createBufferSource(),gain=actx.createGain();src.buffer=buffer;src.loop=loop;gain.gain.value=clamp(volume,0,1);src.connect(gain).connect(dest);src.start(when);if(stopAt)try{src.stop(stopAt)}catch{}sources.push(src)};
+    for(const b of buildBgmSegments(schedule))startSource(b.buffer,base+b.start,project.settings.bgmVolume??.24,true,base+b.end+.03);
+    for(const s of schedule){if(s.line.audioBuffer)startSource(s.line.audioBuffer,base+s.start,1,false);if(s.line.sfxBuffer)startSource(s.line.sfxBuffer,base+s.start,project.settings.sfxVolume??.7,false)}
+    const combined=new MediaStream([...stream.getVideoTracks(),...dest.stream.getAudioTracks()]);const mimes=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];let mime='';for(const m of mimes){if(window.MediaRecorder&&MediaRecorder.isTypeSupported(m)){mime=m;break}}if(!mime)throw new Error('浏览器不支持 WebM 导出，请用 Chrome / Edge');
+    const recorder=new MediaRecorder(combined,{mimeType:mime,videoBitsPerSecond:5_500_000});const chunks=[];recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};const done=new Promise(resolve=>recorder.onstop=resolve);recorder.start(500);const wall=performance.now()/1000+.12;
+    const draw=async()=>{const t=performance.now()/1000-wall;if(t<0){requestAnimationFrame(draw);return}if(t>=total+.12){recorder.stop();return}const seg=locateSchedule(schedule,Math.min(t,total-.001));if(seg){const local=clamp(t-seg.start,0,seg.duration);await renderFrame(seg.line,local,local/seg.duration,cctx,1280,720,true)}$('#progressBar').style.width=(clamp(t/total,0,1)*100).toFixed(1)+'%';$('#progressText').textContent=`实时导出 ${Math.min(t,total).toFixed(1)} / ${total.toFixed(1)} 秒`;requestAnimationFrame(draw)};
+    requestAnimationFrame(draw);await done;sources.forEach(src=>{try{src.stop()}catch{}});await actx.close();const blob=new Blob(chunks,{type:'video/webm'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='replay-lab-output.webm';a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);$('#progressBar').style.width='100%';$('#progressText').textContent='导出完成';toast('Replay WebM 已导出','ok');
+  }catch(err){console.error(err);$('#progressText').textContent='导出失败：'+err.message;toast('导出失败：'+err.message,'error')}finally{runtime.exportBusy=false;$('#btnExport').disabled=false;setTimeout(()=>{$('#exportProgress').style.display='none'},2200)}
+}
+
+function renderCharacters(){
+  const host=$('#characterList');host.innerHTML='';$('#charCount').textContent=project.characters.length+' 个';
+  if(!project.characters.length){host.innerHTML='<div class="empty">还没有角色。解析 Log 后会自动生成角色卡。</div>';return}
+  for(const raw of project.characters){const c=normalizeCharacter(raw);
+    const div=document.createElement('div');div.className='char-card'+(c.id===runtime.selectedCharId?' active':'');div.dataset.id=c.id;const avatar=c.images.idle?`<img src="${c.images.idle}" alt="">`:escapeHtml(initials(c.name));
+    div.innerHTML=`<div class="char-top"><div class="avatar" style="border:1px solid ${c.color}66">${avatar}</div><div class="grow"><input class="char-name" type="text" value="${escapeAttr(c.name)}"><div class="kicker">${c.kind.toUpperCase()} · 默认三图 + 可选表情差分</div></div><button class="small danger char-del">×</button></div>
+      <div class="asset-grid">${assetSlot(c,'idle','IDLE')}${assetSlot(c,'open','OPEN')}${assetSlot(c,'blink','BLINK')}</div>
+      <div class="inline"><label style="margin:0;display:flex;align-items:center;gap:6px;color:var(--text)"><input class="char-show" type="checkbox" ${c.showOnStage?'checked':''}> 允许自动上镜</label><select class="char-kind"><option value="normal" ${c.kind==='normal'?'selected':''}>normal</option><option value="kp" ${c.kind==='kp'?'selected':''}>kp</option><option value="npc" ${c.kind==='npc'?'selected':''}>npc</option><option value="system" ${c.kind==='system'?'selected':''}>system</option></select><select class="char-default-pos"><option value="auto" ${c.defaultPosition==='auto'?'selected':''}>站位 Auto</option><option value="left" ${c.defaultPosition==='left'?'selected':''}>默认左</option><option value="center" ${c.defaultPosition==='center'?'selected':''}>默认中</option><option value="right" ${c.defaultPosition==='right'?'selected':''}>默认右</option></select><input class="char-color" type="color" value="${c.color}" style="width:44px;padding:3px"></div>`;
+    div.addEventListener('click',e=>{if(e.target.closest('input,select,button,label,details,summary'))return;runtime.selectedCharId=c.id;renderCharacters()});
+    div.querySelector('.char-name').addEventListener('change',e=>{c.name=e.target.value;renderCharacters();renderScript();renderInspector();renderCurrentFrame()});
+    div.querySelector('.char-show').addEventListener('change',e=>{c.showOnStage=e.target.checked;renderInspector();renderCurrentFrame()});
+    div.querySelector('.char-kind').addEventListener('change',e=>{c.kind=e.target.value;if(c.kind==='system')c.showOnStage=false;renderCharacters();renderCurrentFrame()});
+    div.querySelector('.char-default-pos').addEventListener('change',e=>{c.defaultPosition=e.target.value;renderInspector();renderCurrentFrame()});
+    div.querySelector('.char-color').addEventListener('input',e=>{c.color=e.target.value;renderScript();renderCurrentFrame()});div.querySelector('.char-del').addEventListener('click',()=>deleteCharacter(c.id));
+    bindAssetUpload(div,c,'idle');bindAssetUpload(div,c,'open');bindAssetUpload(div,c,'blink');buildExpressionManager(div,c);host.appendChild(div);
+  }
+}
+function buildExpressionManager(card,c){
+  const details=document.createElement('details');details.className='expr-manager';details.innerHTML=`<summary>表情差分 · ${Object.keys(c.expressions||{}).length} 组</summary><div class="expr-list"></div><button class="small expr-add" style="margin-top:7px">+ 表情</button>`;const list=details.querySelector('.expr-list');
+  const rebuild=()=>{list.innerHTML='';for(const [name,assets] of Object.entries(c.expressions||{})){const row=document.createElement('div');row.className='expr-row';row.innerHTML=`<input class="expr-name" value="${escapeAttr(name)}"><div class="expr-assets"></div><button class="small danger expr-del">×</button>`;const area=row.querySelector('.expr-assets');for(const key of ['idle','open','blink']){const lab=document.createElement('label');lab.className='expr-file'+(assets[key]?' filled':'');lab.textContent=key.toUpperCase()+(assets[key]?' ✓':'');const inp=document.createElement('input');inp.type='file';inp.accept='image/*';inp.style.display='none';lab.appendChild(inp);inp.addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;assets[key]=await fileToDataURL(f);runtime.imageCache.clear();rebuild();renderCurrentFrame()});area.appendChild(lab)}
+      row.querySelector('.expr-name').addEventListener('change',e=>{const nn=safeText(e.target.value);if(!nn||nn===name||c.expressions[nn]){e.target.value=name;return}c.expressions[nn]=c.expressions[name];delete c.expressions[name];for(const l of project.lines){if(l.speakerId===c.id&&l.expression===name)l.expression=nn}rebuild();renderInspector();renderCurrentFrame()});
+      row.querySelector('.expr-del').addEventListener('click',()=>{delete c.expressions[name];for(const l of project.lines){if(l.speakerId===c.id&&l.expression===name)l.expression='default'}rebuild();renderInspector();renderCurrentFrame()});list.appendChild(row)}};
+  details.querySelector('.expr-add').addEventListener('click',()=>{let i=1,name='表情1';while(c.expressions[name])name='表情'+(++i);c.expressions[name]={idle:null,open:null,blink:null};rebuild();details.open=true;renderInspector()});rebuild();card.appendChild(details);
+}
+function assetSlot(c,key,label){const src=c.images[key]; return `<div class="asset-slot"><div class="asset-preview">${src?`<img src="${src}" alt="">`:'<span>'+label+'</span>'}</div><label class="ghost small" style="display:flex;justify-content:center;cursor:pointer">上传<input data-asset="${key}" type="file" accept="image/*" style="display:none"></label></div>`}
+function bindAssetUpload(card,char,key){const input=card.querySelector(`input[data-asset="${key}"]`); if(!input)return; input.addEventListener('change',async e=>{const file=e.target.files[0]; if(!file)return; char.images[key]=await fileToDataURL(file); runtime.imageCache.delete(char.images[key]); renderCharacters(); renderCurrentFrame(); toast(`${char.name} 的 ${key.toUpperCase()} 已更新`,'ok')})}
+function deleteCharacter(id){if(project.characters.length<=1 && project.lines.length){toast('至少保留一个角色，或先删剧本','error');return} const idx=project.characters.findIndex(c=>c.id===id); if(idx<0)return; const fallback=project.characters.find(c=>c.id!==id); project.lines.forEach(l=>{if(l.speakerId===id && fallback) l.speakerId=fallback.id; if(l.stageIds) l.stageIds=l.stageIds.filter(x=>x!==id);if(l.stagePositions)delete l.stagePositions[id]}); project.characters.splice(idx,1); if(runtime.selectedCharId===id) runtime.selectedCharId=project.characters[0]?.id||null; renderAll()}
+
+
+function nextSceneNumber(){return project.lines.filter(l=>safeText(l.sceneTitle)).length+1}
+function actionRowsForLine(line){
+  const s=line?.scene||{},rows=[];
+  if(s.bgAction==='set')rows.push({kind:'BG',text:`换背景：${s.bgName||'已选择图片'}`});else if(s.bgAction==='clear')rows.push({kind:'BG',text:'清空背景'});
+  if(s.cgAction==='set')rows.push({kind:'CG',text:`显示 CG：${s.cgName||'已选择图片'}`});else if(s.cgAction==='clear')rows.push({kind:'CG',text:'收起 CG'});
+  if(s.bgmAction==='set')rows.push({kind:'BGM',text:`切换 BGM：${s.bgmName||'已选择音频'}`});else if(s.bgmAction==='stop')rows.push({kind:'BGM',text:'停止 BGM'});
+  if(s.enterIds?.length)rows.push({kind:'ENTER',text:s.enterIds.map(id=>getChar(id)?.name||'?').join(' / ')+' 入场'});
+  if(s.exitIds?.length)rows.push({kind:'EXIT',text:s.exitIds.map(id=>getChar(id)?.name||'?').join(' / ')+' 离场'});
+  if(s.camera&&s.camera!=='none')rows.push({kind:'CAM',text:({shake:'镜头震动',zoom:'缓慢推进',focus:'聚焦当前说话人'})[s.camera]||s.camera});
+  if(s.transition==='fade')rows.push({kind:'FADE',text:'场景淡入'});
+  if(line.sfxName)rows.push({kind:'SFX',text:`播放：${line.sfxName}`});
+  return rows;
+}
+function selectLineById(id){runtime.selectedLineId=id;renderScript();renderInspector();renderCurrentFrame()}
+function moveLine(id,delta){const i=project.lines.findIndex(l=>l.id===id),j=i+delta;if(i<0||j<0||j>=project.lines.length)return;const [line]=project.lines.splice(i,1);project.lines.splice(j,0,line);runtime.selectedLineId=id;renderAll()}
+function insertQuickAction(){
+  const line=selectedLine();if(!line)return;normalizeLine(line);const type=$('#quickActionType').value,target=$('#quickActionTarget').value,s=line.scene;
+  if(type==='camera_shake')s.camera='shake';else if(type==='camera_zoom')s.camera='zoom';else if(type==='camera_focus')s.camera='focus';else if(type==='fade')s.transition='fade';else if(type==='stop_bgm')s.bgmAction='stop';else if(type==='clear_cg')s.cgAction='clear';else if(type==='clear_bg')s.bgAction='clear';else if(type==='enter'&&target){s.enterIds=[...new Set([...(s.enterIds||[]),target])];s.exitIds=(s.exitIds||[]).filter(id=>id!==target)}else if(type==='exit'&&target){s.exitIds=[...new Set([...(s.exitIds||[]),target])];s.enterIds=(s.enterIds||[]).filter(id=>id!==target)}
+  renderScript();renderInspector();renderCurrentFrame();toast('演出动作已插入本行','ok');
+}
+function addSceneMarker(){let line=selectedLine();if(!line){addLine(false);line=selectedLine()}normalizeLine(line);if(!line.sceneTitle)line.sceneTitle=`Scene ${nextSceneNumber()}`;renderScript();renderInspector();toast('已在当前行建立 Scene','ok')}
+function compileScriptText(){const out=[];let chapter='';project.lines.forEach(line=>{normalizeLine(line);if(line.chapterTitle&&line.chapterTitle!==chapter){chapter=line.chapterTitle;out.push(`\n# ${chapter}`)}if(line.sceneTitle)out.push(`\n## ${line.sceneTitle}`);for(const a of actionRowsForLine(line))out.push(`@ ${a.kind}: ${a.text}`);const c=getChar(line.speakerId);out.push(`${c?.name||'未知'}: ${line.text}`)});return out.join('\n').replace(/^\n+/,'')+'\n'}
+function exportScriptText(){const blob=new Blob([compileScriptText()],{type:'text/plain;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='replay-script.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1200);toast('脚本已导出','ok')}
+
+function renderScript(){
+  const host=$('#scriptList');host.innerHTML='';$('#lineCount').textContent=project.lines.length+' 条';
+  if(!project.lines.length){host.innerHTML='<div class="empty">剧本为空。导入 Log 或点“+ 台词”。</div>';return}
+  let sceneNo=0;
+  project.lines.forEach((line,i)=>{
+    normalizeLine(line);
+    if(line.chapterTitle){const m=document.createElement('div');m.className='script-marker chapter';m.innerHTML=`<span class="marker-icon">▣</span><span>${escapeHtml(line.chapterTitle)}</span><span class="scene-index">CHAPTER</span>`;m.addEventListener('click',()=>selectLineById(line.id));host.appendChild(m)}
+    if(line.sceneTitle){sceneNo++;const m=document.createElement('div');m.className='script-marker scene';m.innerHTML=`<span class="marker-icon">🎬</span><span>${escapeHtml(line.sceneTitle)}</span><span class="scene-index">SCENE ${sceneNo}</span>`;m.addEventListener('click',()=>selectLineById(line.id));host.appendChild(m)}
+    for(const a of actionRowsForLine(line)){const row=document.createElement('div');row.className='action-row';row.innerHTML=`<span class="action-token">${escapeHtml(a.kind)}</span><span>${escapeHtml(a.text)}</span>`;row.addEventListener('click',()=>selectLineById(line.id));host.appendChild(row)}
+    const c=getChar(line.speakerId),div=document.createElement('div');div.className='line-item'+(line.id===runtime.selectedLineId?' selected':'');
+    div.innerHTML=`<div class="line-num">${i+1}</div><div class="speaker-pill"><span class="dot" style="background:${c?.color||'#888'}"></span><select class="row-speaker">${speakerOptions(line.speakerId)}</select></div><span class="type-badge ${line.type}">${typeLabel(line.type)}</span><div class="line-text" title="${escapeAttr(line.text)}">${escapeHtml(line.text)||'<span class="muted">（空）</span>'}</div><div class="mono muted">${lineDuration(line).toFixed(2)}s</div><div class="script-actions"><button class="ghost move-up" title="上移">↑</button><button class="ghost move-down" title="下移">↓</button></div>`;
+    div.addEventListener('click',e=>{if(e.target.closest('select,button'))return;selectLineById(line.id)});
+    div.querySelector('.row-speaker').addEventListener('change',e=>{line.speakerId=e.target.value;renderScript();if(line.id===runtime.selectedLineId)renderInspector();renderCurrentFrame()});
+    div.querySelector('.move-up').addEventListener('click',()=>moveLine(line.id,-1));div.querySelector('.move-down').addEventListener('click',()=>moveLine(line.id,1));host.appendChild(div);
+  })
+}
+function renderInspector(){
+  const line=selectedLine(),disabled=!line;$('#lineHint').textContent=line?`第 ${project.lines.findIndex(x=>x.id===line.id)+1} 行`:'请选择一行';$('#editSpeaker').innerHTML=speakerOptions(line?.speakerId);
+  ['#editSpeaker','#editType','#editText','#editDuration','#editMouth','#lineAudio','#editStageMode','#editExpression','#lineSfx','#mouthCueFile','#sceneBgAction','#sceneBgFile','#sceneCgAction','#sceneCgFile','#sceneBgmAction','#sceneBgmFile','#sceneCamera','#sceneTransition','#editChapterTitle','#editSceneTitle','#quickActionType','#quickActionTarget','#btnInsertAction'].forEach(sel=>{if($(sel))$(sel).disabled=disabled});
+  if(!line){$('#editText').value='';$('#editChapterTitle').value='';$('#editSceneTitle').value='';$('#quickActionTarget').innerHTML='';$('#audioStatus').textContent='未选中台词';$('#sfxStatus').textContent='未绑定 SFX。';$('#mouthCueStatus').textContent='未导入口型 timing。';$('#stagePreview').innerHTML='';$('#customStageChecks').innerHTML='';$('#stagePositionRows').innerHTML='';$('#sceneEnterChecks').innerHTML='';$('#sceneExitChecks').innerHTML='';$('#sceneStateStatus').textContent='当前场景：—';return}
+  normalizeLine(line);const char=getChar(line.speakerId),idx=currentLineIndex(line);$('#editSpeaker').value=line.speakerId;$('#editType').value=line.type;$('#editText').value=line.text;$('#editDuration').value=(Number(line.duration)||estimateDuration(line.text)).toFixed(2);$('#editMouth').value=line.mouth||'auto';$('#editExpression').innerHTML=expressionOptions(char,line.expression||'default');$('#editExpression').value=expressionNames(char).includes(line.expression)?line.expression:'default';$('#editStageMode').value=line.stageMode||'auto';$('#editChapterTitle').value=line.chapterTitle||'';$('#editSceneTitle').value=line.sceneTitle||'';$('#quickActionTarget').innerHTML=speakerOptions(line.speakerId);
+  $('#audioStatus').textContent=line.audioBuffer?`语音：${line.audioName} · ${line.audioBuffer.duration.toFixed(2)}s · ${line.voiceRegions?.filter(r=>r.voiced).length||0} 个有声区间`:'未绑定语音：使用估算时长和轻量伪口型。';$('#sfxStatus').textContent=line.sfxBuffer?`SFX：${line.sfxName} · ${line.sfxBuffer.duration.toFixed(2)}s`:'未绑定 SFX。';$('#mouthCueStatus').textContent=line.mouthCues?.length?`精确 timing：${line.mouthCues.length} 个 cue（映射到 OPEN / CLOSED）`:'未导入口型 timing；默认使用 VAD。';
+  const ids=getVisibleCharIds(line,idx);$('#stagePreview').innerHTML=ids.length?ids.map(id=>`<span class="stage-chip">${escapeHtml(getChar(id)?.name||'')}</span>`).join(''):'<span class="muted">无</span>';$('#customStageWrap').style.display=line.stageMode==='custom'?'block':'none';
+  $('#customStageChecks').innerHTML=project.characters.filter(c=>c.showOnStage).map(c=>`<label><input type="checkbox" value="${c.id}" ${(line.stageIds||[]).includes(c.id)?'checked':''}> ${escapeHtml(c.name)}</label>`).join('');Array.from($('#customStageChecks').querySelectorAll('input[type="checkbox"]')).forEach(box=>box.addEventListener('change',()=>{line.stageIds=Array.from($('#customStageChecks').querySelectorAll('input:checked')).map(x=>x.value);renderInspector();renderCurrentFrame()}));
+  $('#stagePositionRows').innerHTML=ids.length?ids.map(id=>{const c=getChar(id),val=line.stagePositions?.[id]||'auto';return `<div class="position-row"><span>${escapeHtml(c?.name||'')}</span><select data-stage-pos="${id}"><option value="auto" ${val==='auto'?'selected':''}>Auto</option><option value="left" ${val==='left'?'selected':''}>左</option><option value="center" ${val==='center'?'selected':''}>中</option><option value="right" ${val==='right'?'selected':''}>右</option></select></div>`}).join(''):'<span class="muted">这一行没有上镜角色。</span>';Array.from($('#stagePositionRows').querySelectorAll('select[data-stage-pos]')).forEach(sel=>sel.addEventListener('change',e=>{line.stagePositions=line.stagePositions||{};const id=e.target.dataset.stagePos;if(e.target.value==='auto')delete line.stagePositions[id];else line.stagePositions[id]=e.target.value;renderCurrentFrame()}));
+  const s=line.scene,state=getSceneStateAt(idx);$('#sceneBgAction').value=s.bgAction;$('#sceneCgAction').value=s.cgAction;$('#sceneBgmAction').value=s.bgmAction;$('#sceneCamera').value=s.camera;$('#sceneTransition').value=s.transition;$('#sceneBgStatus').textContent=s.bgAction==='set'?(s.bgName?`本行换成：${s.bgName}`:'请选择背景图'):s.bgAction==='clear'?'本行起清空背景。':'本行不改变背景。';$('#sceneCgStatus').textContent=s.cgAction==='set'?(s.cgName?`本行显示：${s.cgName}`:'请选择 CG'):s.cgAction==='clear'?'本行起收起 CG。':'本行不改变 CG。';$('#sceneBgmStatus').textContent=s.bgmAction==='set'?(s.bgmName?`本行切换：${s.bgmName}`:'请选择 BGM'):s.bgmAction==='stop'?'本行起停止 BGM。':'本行不改变 BGM。';
+  $('#sceneStateStatus').textContent=`当前场景：背景 ${state.background?'有':'无'}${state.backgroundName?' · '+state.backgroundName:''}｜CG ${state.cg?(state.cgName||'有'):'无'}｜BGM ${state.bgmData?(state.bgmName||'有'):'无'}`;
+  const mkChecks=(hostId,selected)=>{const host=$(hostId);host.innerHTML=project.characters.filter(c=>c.showOnStage).map(c=>`<label><input type="checkbox" value="${c.id}" ${selected.includes(c.id)?'checked':''}> ${escapeHtml(c.name)}</label>`).join('')};mkChecks('#sceneEnterChecks',s.enterIds||[]);mkChecks('#sceneExitChecks',s.exitIds||[]);
+  Array.from($('#sceneEnterChecks').querySelectorAll('input')).forEach(b=>b.addEventListener('change',()=>{s.enterIds=Array.from($('#sceneEnterChecks').querySelectorAll('input:checked')).map(x=>x.value);s.exitIds=(s.exitIds||[]).filter(id=>!s.enterIds.includes(id));renderInspector();renderScript();renderCurrentFrame()}));Array.from($('#sceneExitChecks').querySelectorAll('input')).forEach(b=>b.addEventListener('change',()=>{s.exitIds=Array.from($('#sceneExitChecks').querySelectorAll('input:checked')).map(x=>x.value);s.enterIds=(s.enterIds||[]).filter(id=>!s.exitIds.includes(id));renderInspector();renderScript();renderCurrentFrame()}));
+}
+
+async function importRecords(records){
+  if(!records.length){toast('没有识别到有效台词','error');return}
+  project.characters=[]; project.lines=[];
+  for(const r of records){const type=detectType(r.speaker,r.text);let speaker=r.speaker;if(type==='dice'&&isDiceBotName(r.speaker)){const actor=extractDiceActor(r.text);if(actor)speaker=actor}const line=makeLine(speaker,r.text,type);line.sourceSpeaker=r.speaker;project.lines.push(line)}
+  runtime.selectedLineId=project.lines[0]?.id||null; runtime.selectedCharId=project.characters[0]?.id||null; renderAll(); toast(`已解析 ${project.lines.length} 条台词 / ${project.characters.length} 个角色`,'ok')
+}
+function clearProject(){stopPlayback(); project.characters=[];project.lines=[];project.assets={background:null,bgmData:null,bgmName:''}; project.library=emptyLibrary();project.settings={bgColor:'#171924',voiceThreshold:5,maxOnStage:2,dimOthers:true,showNameTags:true,bgmVolume:.24,sfxVolume:.70,mouthLeadMs:66};runtime.selectedLineId=null;runtime.selectedCharId=null;runtime.bgImage=null;runtime.bgmBuffer=null;runtime.imageCache.clear(); syncSettingsUI(); renderAll()}
+function sample(){
+  const rows=[{speaker:'Arthur',text:'我要调查这扇门。'},{speaker:'KP',text:'投一个侦查。'},{speaker:'Arthur',text:'1d100 = 32 / 65 成功。'},{speaker:'KP',text:'门锁附近有很新的刮痕，像是最近被人反复撬过。'},{speaker:'Matthew',text:'那我先不碰门。我看看地上有没有脚印。'},{speaker:'KP',text:'可以，投侦查。'},{speaker:'Matthew',text:'1d100=88/55 失败。'},{speaker:'系统',text:'记录：调查暂时没有更多进展。'}];
+  importRecords(rows);
+  setTimeout(()=>{if(!project.lines.length)return;project.lines[0].chapterTitle='Chapter 1 · 调查';project.lines[0].sceneTitle='门前';project.lines[0].scene.transition='fade';const arthur=project.characters.find(c=>c.name==='Arthur'),matthew=project.characters.find(c=>c.name==='Matthew');if(arthur)project.lines[0].scene.enterIds=[arthur.id];project.lines[4].sceneTitle='第二人加入';if(matthew)project.lines[4].scene.enterIds=[matthew.id];project.lines[6].scene.camera='shake';renderAll()},0)
+}
+function addCharacter(){project.characters.push(makeCharacter('新角色'+(project.characters.length+1))); runtime.selectedCharId=project.characters.at(-1).id; renderCharacters(); renderScript(); renderInspector()}
+function addLine(afterSelected=true){const speakerId=selectedLine()?.speakerId || project.characters[0]?.id || ensureCharacterByName('Arthur').id; if(!project.characters.length) ensureCharacterByName('Arthur'); const line={id:uid('line'),speakerId,type:'dialogue',text:'新台词',chapterTitle:'',sceneTitle:'',duration:null,mouth:'auto',mouthCues:[],expression:'default',audioName:'',audioData:null,audioBuffer:null,voiceRegions:null,sfxName:'',sfxData:null,sfxBuffer:null,stageMode:'auto',stageIds:[],stagePositions:{},sourceSpeaker:'',scene:{bgAction:'inherit',bgData:null,bgName:'',cgAction:'inherit',cgData:null,cgName:'',bgmAction:'inherit',bgmData:null,bgmName:'',bgmBuffer:null,camera:'none',transition:'cut',enterIds:[],exitIds:[]}}; const idx=afterSelected ? Math.max(0,currentLineIndex(selectedLine())+1) : project.lines.length; project.lines.splice(idx,0,line); runtime.selectedLineId=line.id; renderAll()}
+function duplicateLine(){const line=selectedLine(); if(!line)return; const copy=JSON.parse(JSON.stringify({...line,id:uid('line')})); copy.audioBuffer=line.audioBuffer; copy.voiceRegions=line.voiceRegions ? line.voiceRegions.map(r=>({...r})) : null; const idx=currentLineIndex(line)+1; project.lines.splice(idx,0,copy); runtime.selectedLineId=copy.id; renderAll()}
+function deleteLine(){const line=selectedLine(); if(!line)return; const idx=currentLineIndex(line); project.lines.splice(idx,1); runtime.selectedLineId=project.lines[idx]?.id || project.lines[idx-1]?.id || null; renderAll()}
+
+function serializeProject(){
+  return {version:project.version,characters:project.characters,lines:project.lines.map(({audioBuffer,sfxBuffer,voiceRegions,...rest})=>{const scene={...(rest.scene||{})};delete scene.bgmBuffer;return {...rest,scene,voiceRegions}}),assets:project.assets,library:project.library,settings:project.settings};
+}
+async function hydrateProject(data){
+  stopPlayback();project.characters=(Array.isArray(data.characters)?data.characters:[]).map(normalizeCharacter);project.lines=(Array.isArray(data.lines)?data.lines:[]).map(normalizeLine);project.assets={background:null,bgmData:null,bgmName:'',...(data.assets||{})};project.library={...emptyLibrary(),...(data.library||{})};project.settings={...project.settings,...(data.settings||{})};runtime.imageCache.clear();runtime.bgImage=null;runtime.bgmBuffer=null;
+  for(const line of project.lines){if(line.audioData){try{line.audioBuffer=await decodeAudioDataUrl(line.audioData);line.voiceRegions=analyzeAudio(line.audioBuffer)}catch(e){console.warn('audio hydrate failed',e)}}if(line.sfxData){try{line.sfxBuffer=await decodeAudioDataUrl(line.sfxData)}catch(e){console.warn('sfx hydrate failed',e)}}if(line.scene?.bgmData){try{line.scene.bgmBuffer=await decodeAudioDataUrl(line.scene.bgmData)}catch(e){console.warn('scene bgm hydrate failed',e)}}}
+  if(project.assets.background)runtime.bgImage=await loadImage(project.assets.background);if(project.assets.bgmData){try{runtime.bgmBuffer=await decodeAudioDataUrl(project.assets.bgmData)}catch(e){console.warn('bgm hydrate failed',e)}}runtime.selectedLineId=project.lines[0]?.id||null;runtime.selectedCharId=project.characters[0]?.id||null;syncSettingsUI();renderAssetLibrary();renderAll();
+}
+function saveProjectJson(){const blob=new Blob([JSON.stringify(serializeProject())],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='replay-lab-project-v0.7.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1200);toast('工程已保存','ok')}
+function syncSettingsUI(){
+  $('#bgColor').value=project.settings.bgColor||'#171924';$('#voiceThreshold').value=project.settings.voiceThreshold||5;$('#thresholdLabel').textContent=project.settings.voiceThreshold||5;$('#maxOnStage').value=String(project.settings.maxOnStage||2);$('#dimOthers').checked=!!project.settings.dimOthers;$('#showNameTags').checked=!!project.settings.showNameTags;$('#mouthLeadMs').value=Number(project.settings.mouthLeadMs??66);$('#mouthLeadLabel').textContent=$('#mouthLeadMs').value+' ms';$('#bgmVolume').value=Math.round((project.settings.bgmVolume??.24)*100);$('#bgmVolumeLabel').textContent=$('#bgmVolume').value+'%';$('#sfxVolume').value=Math.round((project.settings.sfxVolume??.70)*100);$('#sfxVolumeLabel').textContent=$('#sfxVolume').value+'%';$('#bgmStatus').textContent=project.assets.bgmName?`已绑定：${project.assets.bgmName}`:'未绑定 BGM。';
+}
+function renderAll(){renderCharacters(); renderScript(); renderInspector(); renderAssetLibrary(); renderCurrentFrame()}
+
+$('#btnParse').addEventListener('click',()=>importRecords(parseTextLog($('#logInput').value)));
+$('#btnSample').addEventListener('click',sample);
+$('#btnClear').addEventListener('click',clearProject);
+$('#btnAddCharacter').addEventListener('click',addCharacter);
+$('#btnAddLine').addEventListener('click',()=>addLine(true));
+$('#btnAddScene').addEventListener('click',addSceneMarker);
+$('#btnInsertAction').addEventListener('click',insertQuickAction);
+$('#btnExportScript').addEventListener('click',exportScriptText);
+$('#btnDuplicateLine').addEventListener('click',duplicateLine);
+$('#btnDeleteLine').addEventListener('click',deleteLine);
+$('#btnPlayLine').addEventListener('click',()=>play(selectedLine()?[selectedLine()]:[]));
+$('#btnPlayAll').addEventListener('click',()=>play(project.lines));
+$('#btnStop').addEventListener('click',stopPlayback);
+$('#btnExport').addEventListener('click',exportProjectVideo);
+$('#btnSaveProject').addEventListener('click',saveProjectJson);
+$('#projectFolder').addEventListener('change',e=>importWholeProjectFolder(e.target.files));
+$('#btnExportYmm').addEventListener('click',exportYmmScript);
+$('#btnExportCsv').addEventListener('click',exportCsvScript);
+$('#btnExportCompiled').addEventListener('click',exportCompiledJson);
+$('#btnApplyLibraryBg').addEventListener('click',()=>applyLibraryAsset('backgrounds','#libraryBgSelect'));
+$('#btnApplyLibraryCg').addEventListener('click',()=>applyLibraryAsset('cg','#libraryCgSelect'));
+$('#btnApplyLibraryBgm').addEventListener('click',()=>applyLibraryAsset('bgm','#libraryBgmSelect'));
+$('#btnApplyLibrarySfx').addEventListener('click',()=>applyLibraryAsset('sfx','#librarySfxSelect'));
+$('#voiceThreshold').addEventListener('input',e=>{project.settings.voiceThreshold=Number(e.target.value); $('#thresholdLabel').textContent=e.target.value; for(const l of project.lines){if(l.audioBuffer) l.voiceRegions=analyzeAudio(l.audioBuffer)} renderInspector(); renderCurrentFrame()});
+$('#bgColor').addEventListener('input',e=>{project.settings.bgColor=e.target.value; renderCurrentFrame()});
+$('#maxOnStage').addEventListener('change',e=>{project.settings.maxOnStage=Number(e.target.value); renderInspector(); renderCurrentFrame()});
+$('#dimOthers').addEventListener('change',e=>{project.settings.dimOthers=e.target.checked; renderCurrentFrame()});
+$('#showNameTags').addEventListener('change',e=>{project.settings.showNameTags=e.target.checked; renderCurrentFrame()});
+$('#mouthLeadMs').addEventListener('input',e=>{project.settings.mouthLeadMs=Number(e.target.value);$('#mouthLeadLabel').textContent=e.target.value+' ms';renderCurrentFrame()});
+$('#seek').addEventListener('input',async e=>{if(runtime.playback)return; const line=selectedLine(); if(!line)return; const t=lineDuration(line)*(Number(e.target.value)/1000); await renderFrame(line,t,t/lineDuration(line)); $('#previewTime').textContent=`${t.toFixed(2)} / ${lineDuration(line).toFixed(2)}`; $('#previewType').textContent=typeLabel(line.type); updateActiveStageInfo(line)});
+$('#logFiles').addEventListener('change',async e=>{if(e.target.files?.length)await importLogFileBatch(e.target.files)});
+$('#logFolder').addEventListener('change',async e=>{if(e.target.files?.length)await importLogFileBatch(e.target.files)});
+$('#bgFile').addEventListener('change',async e=>{const file=e.target.files[0]; if(!file)return; project.assets.background=await fileToDataURL(file); runtime.bgImage=await loadImage(project.assets.background); renderCurrentFrame(); toast('背景图已更新','ok')});
+$('#projectFile').addEventListener('change',async e=>{const file=e.target.files[0]; if(!file)return; try{const text=await fileToText(file); const data=JSON.parse(text); await hydrateProject(data); toast('工程已载入','ok')}catch(err){console.error(err); toast('读取工程失败：'+err.message,'error')}});
+$('#editSpeaker').addEventListener('change',e=>{const l=selectedLine(); if(!l)return; l.speakerId=e.target.value;l.expression='default';renderScript();renderInspector();renderCurrentFrame()});
+$('#editType').addEventListener('change',e=>{const l=selectedLine(); if(!l)return; l.type=e.target.value; renderScript(); renderCurrentFrame()});
+$('#editText').addEventListener('input',e=>{const l=selectedLine(); if(!l)return; l.text=e.target.value; renderScript(); renderInspector(); renderCurrentFrame()});
+$('#editChapterTitle').addEventListener('input',e=>{const l=selectedLine();if(!l)return;l.chapterTitle=e.target.value;renderScript()});
+$('#editSceneTitle').addEventListener('input',e=>{const l=selectedLine();if(!l)return;l.sceneTitle=e.target.value;renderScript()});
+$('#editDuration').addEventListener('input',e=>{const l=selectedLine(); if(!l)return; l.duration=Number(e.target.value)||null; renderScript(); renderCurrentFrame()});
+$('#editMouth').addEventListener('change',e=>{const l=selectedLine(); if(!l)return; l.mouth=e.target.value; renderCurrentFrame()});
+$('#editStageMode').addEventListener('change',e=>{const l=selectedLine(); if(!l)return; l.stageMode=e.target.value; if(l.stageMode==='auto') l.stageIds=[]; renderInspector(); renderCurrentFrame()});
+$('#lineAudio').addEventListener('change',async e=>{const file=e.target.files[0],line=selectedLine();if(!file||!line)return;try{line.audioName=file.name;line.audioData=await fileToDataURL(file);line.audioBuffer=await decodeAudioDataUrl(line.audioData);line.voiceRegions=analyzeAudio(line.audioBuffer);line.duration=null;renderScript();renderInspector();renderCurrentFrame();toast('本句语音已绑定','ok')}catch(err){console.error(err);toast('音频处理失败：'+err.message,'error')}});
+$('#lineSfx').addEventListener('change',async e=>{const file=e.target.files[0],line=selectedLine();if(!file||!line)return;try{line.sfxName=file.name;line.sfxData=await fileToDataURL(file);line.sfxBuffer=await decodeAudioDataUrl(line.sfxData);renderInspector();toast('本句 SFX 已绑定','ok')}catch(err){console.error(err);toast('SFX 处理失败：'+err.message,'error')}});
+$('#mouthCueFile').addEventListener('change',async e=>{const file=e.target.files[0],line=selectedLine();if(!file||!line)return;try{const text=await fileToText(file);const cues=parseMouthTimingText(text);if(!cues.length)throw new Error('未识别到 mouth cue');line.mouthCues=cues;line.mouth='cue';renderInspector();renderCurrentFrame();toast(`已导入 ${cues.length} 个口型 cue`,'ok')}catch(err){console.error(err);toast('口型 timing 读取失败：'+err.message,'error')}});
+$('#editExpression').addEventListener('change',e=>{const line=selectedLine();if(!line)return;line.expression=e.target.value;renderCurrentFrame()});
+$('#bgmFile').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{project.assets.bgmName=file.name;project.assets.bgmData=await fileToDataURL(file);runtime.bgmBuffer=await decodeAudioDataUrl(project.assets.bgmData);syncSettingsUI();toast('BGM 已绑定','ok')}catch(err){console.error(err);toast('BGM 处理失败：'+err.message,'error')}});
+$('#bgmVolume').addEventListener('input',e=>{project.settings.bgmVolume=Number(e.target.value)/100;$('#bgmVolumeLabel').textContent=e.target.value+'%'});
+$('#sfxVolume').addEventListener('input',e=>{project.settings.sfxVolume=Number(e.target.value)/100;$('#sfxVolumeLabel').textContent=e.target.value+'%'});
+$('#btnClearSceneEvent').addEventListener('click',()=>{const l=selectedLine();if(!l)return;l.scene={bgAction:'inherit',bgData:null,bgName:'',cgAction:'inherit',cgData:null,cgName:'',bgmAction:'inherit',bgmData:null,bgmName:'',bgmBuffer:null,camera:'none',transition:'cut',enterIds:[],exitIds:[]};renderInspector();renderScript();renderCurrentFrame();toast('已清除本行场景事件','ok')});
+['sceneBgAction','sceneCgAction','sceneBgmAction','sceneCamera','sceneTransition'].forEach(id=>$('#'+id).addEventListener('change',e=>{const l=selectedLine();if(!l)return;normalizeLine(l);const map={sceneBgAction:'bgAction',sceneCgAction:'cgAction',sceneBgmAction:'bgmAction',sceneCamera:'camera',sceneTransition:'transition'};l.scene[map[id]]=e.target.value;renderInspector();renderScript();renderCurrentFrame()}));
+$('#sceneBgFile').addEventListener('change',async e=>{const f=e.target.files[0],l=selectedLine();if(!f||!l)return;normalizeLine(l);l.scene.bgData=await fileToDataURL(f);l.scene.bgName=f.name;l.scene.bgAction='set';renderInspector();renderScript();renderCurrentFrame();toast('场景背景事件已设置','ok')});
+$('#sceneCgFile').addEventListener('change',async e=>{const f=e.target.files[0],l=selectedLine();if(!f||!l)return;normalizeLine(l);l.scene.cgData=await fileToDataURL(f);l.scene.cgName=f.name;l.scene.cgAction='set';renderInspector();renderScript();renderCurrentFrame();toast('CG 事件已设置','ok')});
+$('#sceneBgmFile').addEventListener('change',async e=>{const f=e.target.files[0],l=selectedLine();if(!f||!l)return;try{normalizeLine(l);l.scene.bgmData=await fileToDataURL(f);l.scene.bgmName=f.name;l.scene.bgmBuffer=await decodeAudioDataUrl(l.scene.bgmData);l.scene.bgmAction='set';renderInspector();renderScript();toast('场景 BGM 事件已设置','ok')}catch(err){console.error(err);toast('场景 BGM 处理失败：'+err.message,'error')}});
+
+sample();
+</script>
+</body>
+</html>

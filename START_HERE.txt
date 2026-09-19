@@ -1,0 +1,22 @@
+Replay Lab 0.35-dev — 启动说明
+
+不要直接双击 web/studio.html。
+当前 Studio 使用 ES Module，浏览器在 file:// 模式下通常会拦截模块加载，结果就是“页面看得到，但很多按钮点不了”。
+
+推荐：
+- Windows: 双击 START_REPLAY_LAB.bat
+- macOS: 双击 START_REPLAY_LAB.command（首次可能需要在系统设置中允许）
+- Linux: 运行 ./START_REPLAY_LAB.sh
+- 通用: python3 launch_replay_lab.py
+
+启动器会在本机 127.0.0.1 启动一个静态 HTTP 服务器并自动打开 Studio。
+关闭启动器窗口或按 Ctrl+C 即可停止。
+
+如果你只是要做纯文字 Replay，不需要任何立绘；直接导入 Log/剧情台本即可，角色会使用占位立绘。
+
+Voicebox Local（可选）
+--------------------
+如果你单独安装并启动了 Voicebox，必须使用上面的 START_REPLAY_LAB 启动器打开 Replay Lab。
+新版启动器会把浏览器的 /__voicebox 请求安全地转发到本机 127.0.0.1:17493，
+所以 Replay Lab 自己即使使用随机端口，也不再受 Voicebox CORS 白名单影响。
+Replay Lab 不会安装 Voicebox，也不会代替 Voicebox 下载模型；第一次生成需要某个模型时，下载由 Voicebox 自己处理。
