@@ -60,7 +60,7 @@ test('Studio protects project-replacing actions and only shows batch checkboxes 
 });
 
 test('Voice workbench is task-focused and does not auto-create a sample project', () => {
-  assert.match(voiceHtml, /Replay Lab 0\.53\.2-dev · 声音/);
+  assert.match(voiceHtml, /Replay Lab 0\.57\.0-dev · 声音/);
   assert.match(voiceHtml, /<details class="card" id="voiceInputDetails">/);
   assert.match(voiceHtml, /<details class="card"><summary>调试：Performance JSON<\/summary>/);
   assert.doesNotMatch(voiceJs.trimEnd(), /parse\(\);$/);
@@ -178,7 +178,7 @@ test('0.30 Studio exposes split left/right face assets and draggable perspective
 });
 
 test('0.26 character editor exposes optional English phoneme mouths without cluttering the default layer grid', () => {
-  assert.match(studioHtml, /Replay Lab Studio 0\.53\.2-dev/);
+  assert.match(studioHtml, /Replay Lab Studio 0\.57\.0-dev/);
   assert.match(studioJs, /英语精细口型/);
   assert.match(studioJs, /mouthSchwa/);
   assert.match(studioJs, /mouthAe/);
@@ -388,7 +388,7 @@ test('0.44.3 Studio exposes human-readable batch punctuation timing instead of e
 });
 
 test('0.45 Studio exposes collapsible Director Beats and expression inheritance', () => {
-  assert.match(studioHtml, /Replay Lab Studio 0\.53\.2-dev/);
+  assert.match(studioHtml, /Replay Lab Studio 0\.57\.0-dev/);
   assert.match(studioJs, /function makeScriptBeat/);
   assert.match(studioJs, /演出 ×\$\{row\.count\}/);
   assert.match(studioJs, /继承上一表情/);
@@ -515,3 +515,14 @@ test('0.53.1 default audio UI stays simple while precise mix controls remain beh
   assert.match(studioJs,/data-line-audio="sfxPan"/);
 });
 
+
+
+test('0.53.2 exposes a project-wide spoken language separate from Log language and an optional Voicebox Local backend', () => {
+  assert.match(studioHtml, /id="projectSpeechLanguage"/);
+  assert.match(studioHtml, /工程统一朗读语言/);
+  assert.match(studioJs, /project\.settings\.speechLanguage/);
+  assert.match(voiceHtml, /id="speechLanguage"/);
+  assert.match(voiceHtml, /Voicebox Local（可选）/);
+  assert.match(voiceJs, /VOICEBOX_LOCAL_TTS_ID/);
+  assert.match(voiceJs, /同语言样本会优先显示/);
+});

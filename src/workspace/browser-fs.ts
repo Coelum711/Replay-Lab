@@ -1,6 +1,9 @@
 import type { ReplayProject } from '../core/types.js';
+import { normalizeReplayProject } from '../core/normalize.js';
+import { serializeWorkspaceWrite } from './lock.js';
 import { WorkspaceConflictError, workspaceManifestFingerprint } from './conflict.js';
 import { PROJECT_MANIFEST_PATH, WORKSPACE_DIRECTORIES } from './layout.js';
+import {desktopBridge,DesktopProjectWorkspace} from './desktop.js';
 import type { ProjectWorkspace, WorkspaceData, WorkspaceFileInfo } from './types.js';
 
 function normalizePath(path: string): string[] {
@@ -26,7 +29,8 @@ export class BrowserFileSystemWorkspace implements ProjectWorkspace {
     this.id = `fs-${root.name}`;
   }
 
-  static async choose(options: { mode?: 'read' | 'readwrite'; startIn?: string } = {}): Promise<BrowserFileSystemWorkspace> {
+  static async choose(options: { mode?: 'read' | 'readwrite'; startIn?: string;recentId?:string } = {}): Promise<ProjectWorkspace> {
+    if(desktopBridge())return DesktopProjectWorkspace.choose(options.recentId);
     const picker = (globalThis as typeof globalThis & { showDirectoryPicker?: (opts?: unknown) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker;
     if (!picker) throw new Error('This browser does not support the File System Access directory picker. Use Chrome/Edge or export a project bundle instead.');
     const handle = await picker({ mode: options.mode ?? 'readwrite', startIn: options.startIn });
@@ -115,16 +119,18 @@ export class BrowserFileSystemWorkspace implements ProjectWorkspace {
   }
 
   async saveProject(project: ReplayProject): Promise<void> {
-    await this.assertProjectCurrent();
     const text = JSON.stringify(project, null, 2);
-    await this.write(PROJECT_MANIFEST_PATH, text, 'application/json');
-    this.lastProjectFingerprint = workspaceManifestFingerprint(text);
+    await serializeWorkspaceWrite(this, async () => {
+      await this.assertProjectCurrent();
+      await this.write(PROJECT_MANIFEST_PATH, text, 'application/json');
+      this.lastProjectFingerprint = workspaceManifestFingerprint(text);
+    });
   }
 
   async loadProject(): Promise<ReplayProject | null> {
     if (!(await this.exists(PROJECT_MANIFEST_PATH))) { this.lastProjectFingerprint = null; return null; }
     const text = await (await this.read(PROJECT_MANIFEST_PATH)).text();
     this.lastProjectFingerprint = workspaceManifestFingerprint(text);
-    return JSON.parse(text) as ReplayProject;
+    return normalizeReplayProject(JSON.parse(text));
   }
 }

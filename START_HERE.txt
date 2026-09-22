@@ -1,4 +1,22 @@
-Replay Lab 0.35-dev — 启动说明
+0.57：摄像机与施工台操作见 CAMERA_WORKBENCH_0.57_CN.md。
+
+Replay Lab 0.57.0-dev
+
+Mac 桌面版：请使用单独交付的 Replay-Lab-0.56.0-Mac-arm64.zip，解压后将 Replay Lab.app 拖入应用程序。
+桌面版无需运行下面的浏览器启动脚本。完整说明见 DESKTOP_README_CN.md。
+
+--- 浏览器兼容版启动说明 ---
+
+Replay Lab 0.54.3-dev — 启动说明
+
+本版完成整包检查与修复，详见 AUDIT_0.54.3_CN.md。
+从 Studio 打开声音页可接续当前工程；旧版程序文件夹请保留备份。
+
+克隆 + 文字情绪：先读 VOICE_BRIDGE_CN.md。
+INSTALL_VOICE_BRIDGE.command 只安装独立依赖；START_VOICE_BRIDGE.command 启动本机桥。
+实验路径需要 MLX 1.7B Base + 1.7B CustomVoice，不会自动下载模型。
+已有 MLX 0.6B Base 继续用于普通 Voicebox 克隆，不需要删除或重下。
+本包包含后端实现和离线测试；尚未通过 Apple Silicon 真机推理/试听验证。
 
 不要直接双击 web/studio.html。
 当前 Studio 使用 ES Module，浏览器在 file:// 模式下通常会拦截模块加载，结果就是“页面看得到，但很多按钮点不了”。
@@ -13,10 +31,3 @@ Replay Lab 0.35-dev — 启动说明
 关闭启动器窗口或按 Ctrl+C 即可停止。
 
 如果你只是要做纯文字 Replay，不需要任何立绘；直接导入 Log/剧情台本即可，角色会使用占位立绘。
-
-Voicebox Local（可选）
---------------------
-如果你单独安装并启动了 Voicebox，必须使用上面的 START_REPLAY_LAB 启动器打开 Replay Lab。
-新版启动器会把浏览器的 /__voicebox 请求安全地转发到本机 127.0.0.1:17493，
-所以 Replay Lab 自己即使使用随机端口，也不再受 Voicebox CORS 白名单影响。
-Replay Lab 不会安装 Voicebox，也不会代替 Voicebox 下载模型；第一次生成需要某个模型时，下载由 Voicebox 自己处理。

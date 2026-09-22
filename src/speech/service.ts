@@ -1,9 +1,11 @@
-import type { ReplayLine, ReplayProject } from '../core/types.js';
+import type { ReplayLine, ReplayProject, ProsodyPoint } from '../core/types.js';
+import { assertProsodyReenactment, normalizeProsodyCurve, prosodyInstruction } from './prosody.js';
 import type { TranslationRegistry } from '../translation/registry.js';
 import type { TtsRegistry } from '../tts/registry.js';
 import type { TtsResult } from '../tts/types.js';
 import { REPLAYLAB_FREE_TTS_ID } from '../tts/kokoro.js';
-import { resolveSpeechPolicy } from './policy.js';
+import { resolveSpeechPolicy, resolveCachedSpeech, isTranslationCacheValid } from './policy.js';
+import { captureSpeechGuard, speechInputFingerprint } from './job.js';
 import { accentSynthesisHint, accentTranslationHint, accentTranslationStyleKey } from '../pronunciation/accent.js';
 import { collapseMouthCues, phonemesToMouthCues } from '../lipsync/viseme.js';
 import { resolvePunctuationPauseTiming, resolveSpeechPauseScale, speechTextForGenericTts } from './pause.js';
@@ -11,6 +13,10 @@ import { resolvePunctuationPauseTiming, resolveSpeechPauseScale, speechTextForGe
 export type SpeechAudioSource = 'none' | 'imported' | 'builtin-tts' | 'external-tts';
 
 export interface PreparedSpeech {
+  /** Explicit candidate adoption; retains the old asset and checks the source binding. */
+  audioEdit?: { kind: 'pitch-curve' | 'curve-instruct' | 'restore'; curve?: ProsodyPoint[]; sourceAssetId: string | null; sourceRevision?: string; resetMouthTiming?: boolean; };
+  /** Effective inputs at generation time; used when adopting/persisting later. */
+  inputFingerprint?: string;
   displayText: string;
   speechText: string;
   sourceLanguage: string;
@@ -26,6 +32,11 @@ export interface PreparedSpeech {
 }
 
 export interface PrepareSpeechOptions {
+  signal?: AbortSignal;
+  /** Explicit curve re-record: creates a candidate even when an imported recording is bound. */
+  prosodyReenactment?: ProsodyPoint[];
+  /** UI context guard, e.g. reject a result after switching projects/windows. */
+  assertCurrent?: () => void;
   translations?: TranslationRegistry;
   tts?: TtsRegistry;
   translate?: boolean;
@@ -34,29 +45,33 @@ export interface PrepareSpeechOptions {
   regenerateGeneratedAudio?: boolean;
 }
 
-function cacheValid(line: ReplayLine, source: string, target: string, styleKey: string): boolean {
-  const cache = line.speech?.translationCache;
-  return !!cache
-    && cache.sourceText === line.text
-    && cache.sourceLanguage === source
-    && cache.targetLanguage === target
-    && (cache.styleKey ?? '') === styleKey
-    && typeof cache.text === 'string';
-}
-
 /**
  * Prepares the spoken side of a replay line without mutating line.text.
  * Audio priority: imported line audio > user-bound external TTS > Replay Lab Free.
  */
 export async function prepareLineSpeech(project: ReplayProject, line: ReplayLine, options: PrepareSpeechOptions = {}): Promise<PreparedSpeech> {
   const policy = resolveSpeechPolicy(project, line);
+  if (options.prosodyReenactment) assertProsodyReenactment(project,line);
+  const guard = captureSpeechGuard(project, line);
+  const assertCurrent = () => { guard(); options.assertCurrent?.(); };
+  assertCurrent();
+  const inputFingerprint = speechInputFingerprint(project, line);
   const displayText = line.text;
   let speechText = line.speech?.textOverride || line.text;
   let translated = false;
   const translationStyleKey = accentTranslationStyleKey(policy.accent);
+  const boundAudio = line.audioAssetId ? project.assets.find(asset => asset.id === line.audioAssetId) : undefined;
+  const generatedBoundAudio = !!boundAudio?.metadata?.generated;
+  const blockingAudio = !!line.audioAssetId && !options.prosodyReenactment && !(options.regenerateGeneratedAudio && generatedBoundAudio);
+  if (blockingAudio || line.type === 'command') {
+    return { displayText, speechText: resolveCachedSpeech(project, line).text,
+      sourceLanguage: policy.sourceLanguage, targetLanguage: policy.targetLanguage,
+      translated: false, ttsProvider: policy.ttsProvider, translationProvider: policy.translationProvider,
+      audioSource: blockingAudio ? 'imported' : 'none', audioAssetId: line.audioAssetId, inputFingerprint };
+  }
 
   if (!line.speech?.textOverride && policy.shouldTranslate && options.translate !== false) {
-    if (cacheValid(line, policy.sourceLanguage, policy.targetLanguage, translationStyleKey)) {
+    if (isTranslationCacheValid(line, policy)) {
       speechText = line.speech!.translationCache!.text;
       translated = true;
     } else {
@@ -70,12 +85,12 @@ export async function prepareLineSpeech(project: ReplayProject, line: ReplayLine
         targetLanguage: policy.targetLanguage,
         accent: accentTranslationHint(policy.accent)
       });
+      assertCurrent();
       line.speech ??= {};
-      const effectiveSourceLanguage = result.detectedSourceLanguage || policy.sourceLanguage;
-      line.speech.sourceLanguage = effectiveSourceLanguage;
       line.speech.translationCache = {
-        sourceText: line.text,
-        sourceLanguage: effectiveSourceLanguage,
+        sourceText: displayText,
+        sourceLanguage: policy.sourceLanguage,
+        detectedSourceLanguage: result.detectedSourceLanguage,
         targetLanguage: policy.targetLanguage,
         text: result.text,
         provider: provider.id,
@@ -88,9 +103,6 @@ export async function prepareLineSpeech(project: ReplayProject, line: ReplayLine
   }
 
   let ttsResult: TtsResult | undefined;
-  const boundAudio = line.audioAssetId ? project.assets.find(asset => asset.id === line.audioAssetId) : undefined;
-  const generatedBoundAudio = !!boundAudio?.metadata?.generated;
-  const blockingAudio = !!line.audioAssetId && !(options.regenerateGeneratedAudio && generatedBoundAudio);
   let audioSource: SpeechAudioSource = blockingAudio ? 'imported' : 'none';
   if (options.synthesize && !blockingAudio) {
     const providerId = policy.ttsProvider || REPLAYLAB_FREE_TTS_ID;
@@ -102,6 +114,7 @@ export async function prepareLineSpeech(project: ReplayProject, line: ReplayLine
     const pauseScale = resolveSpeechPauseScale(project, line);
     const requestText = providerId === REPLAYLAB_FREE_TTS_ID ? speechText : speechTextForGenericTts(speechText);
     ttsResult = await provider.synthesize({
+      signal: options.signal,
       text: requestText,
       language: policy.targetLanguage === 'auto' ? undefined : policy.targetLanguage,
       voiceId: policy.voice.voiceId,
@@ -109,10 +122,16 @@ export async function prepareLineSpeech(project: ReplayProject, line: ReplayLine
       pitch: policy.voice.pitch,
       accent: accentSynthesisHint(policy.accent),
       pauseScale,
-      punctuationPauses: resolvePunctuationPauseTiming(project, line)
+      punctuationPauses: resolvePunctuationPauseTiming(project, line),
+      instruct: [policy.voice.actingPreset && `${policy.voice.actingStrength || 'natural'} intensity: ${policy.voice.actingPreset}`, policy.voice.instruct,
+        options.prosodyReenactment && prosodyInstruction(options.prosodyReenactment,speechText)].filter(Boolean).join('. ') || undefined,
+      seed: policy.voice.seed,
+      modelSize: policy.voice.modelSize,
+      experimentalCloneInstruct: policy.voice.mode === 'experimental-clone-instruct'
     });
+    assertCurrent();
     audioSource = providerId === REPLAYLAB_FREE_TTS_ID ? 'builtin-tts' : 'external-tts';
-    if (ttsResult.phonemes?.length) {
+    if (ttsResult.phonemes?.length && !options.prosodyReenactment) {
       // Store raw timing; the renderer applies project mouthLeadMs at playback,
       // avoiding double-leading cues here. Language selects the English
       // ARPABET mapping when appropriate.
@@ -125,9 +144,11 @@ export async function prepareLineSpeech(project: ReplayProject, line: ReplayLine
   }
 
   return {
+    ...(options.prosodyReenactment ? {audioEdit:{kind:'curve-instruct' as const,curve:normalizeProsodyCurve(options.prosodyReenactment),sourceAssetId:line.audioAssetId ?? null,sourceRevision:boundAudio?.metadata?.contentRevision as string | undefined}} : {}),
+    inputFingerprint,
     displayText,
     speechText,
-    sourceLanguage: line.speech?.sourceLanguage || policy.sourceLanguage,
+    sourceLanguage: line.speech?.translationCache?.detectedSourceLanguage || policy.sourceLanguage,
     targetLanguage: policy.targetLanguage,
     translated,
     translationProvider: policy.translationProvider,
@@ -144,30 +165,42 @@ export interface PrepareProjectSpeechOptions extends PrepareSpeechOptions {
   concurrency?: number;
   /** Optional line filter; defaults to all lines. */
   include?: (line: ReplayLine, index: number) => boolean;
-  onProgress?: (completed: number, total: number, line: ReplayLine, result: PreparedSpeech) => void;
+  /** Identify the active line before translation or model work starts. */
+  onLineStart?: (line: ReplayLine, index: number, total: number) => void | Promise<void>;
+  onProgress?: (completed: number, total: number, line: ReplayLine, result: PreparedSpeech) => void | Promise<void>;
 }
 
 export async function prepareProjectSpeech(project: ReplayProject, options: PrepareProjectSpeechOptions = {}): Promise<PreparedSpeech[]> {
   const jobs = project.lines
     .map((line, index) => ({ line, index }))
-    .filter(({ line, index }) => options.include ? options.include(line, index) : true);
+    .filter(({ line, index }) => line.type !== 'command' && (options.include ? options.include(line, index) : true));
   const results: PreparedSpeech[] = new Array(jobs.length);
   const concurrency = Math.max(1, Math.min(16, options.concurrency ?? 3));
   let cursor = 0;
   let completed = 0;
+  let failed = false;
+  let failure: unknown;
 
   async function worker(): Promise<void> {
     while (true) {
+      if (failed) return;
       const jobIndex = cursor++;
       if (jobIndex >= jobs.length) return;
       const job = jobs[jobIndex]!;
-      const result = await prepareLineSpeech(project, job.line, options);
-      results[jobIndex] = result;
-      completed += 1;
-      options.onProgress?.(completed, jobs.length, job.line, result);
+      try {
+        await options.onLineStart?.(job.line, job.index, jobs.length);
+        const result = await prepareLineSpeech(project, job.line, options);
+        results[jobIndex] = result;
+        completed += 1;
+        await options.onProgress?.(completed, jobs.length, job.line, result);
+      } catch (error) {
+        if (!failed) failure = error;
+        failed = true;
+      }
     }
   }
 
   await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length || 1) }, () => worker()));
+  if (failed) throw failure;
   return results;
 }

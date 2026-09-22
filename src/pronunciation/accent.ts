@@ -1,17 +1,14 @@
 import type { AccentSelection, ReplayCharacter, ReplayLine } from '../core/types.js';
 import { getAccentProfile } from './catalog.js';
+import { languageBase, resolveLanguageSlot } from '../core/language.js';
 import type { AccentSynthesisHint, AccentTranslationHint, AccentVoiceMatch, ResolvedAccent, VoiceAccentCapability } from './types.js';
-
-function languageBase(language: string): string { return (language || 'auto').toLowerCase().split('-')[0]!; }
 
 export function resolveCharacterAccent(character: ReplayCharacter | undefined, targetLanguage: string, line?: ReplayLine): ResolvedAccent | undefined {
   const override = line?.speech?.accentOverride;
   let selection: AccentSelection | undefined | null = override;
   if (override === undefined) {
     const accents = character?.speech?.accents ?? {};
-    selection = accents[targetLanguage]
-      ?? Object.entries(accents).find(([language]) => languageBase(language) === languageBase(targetLanguage))?.[1]
-      ?? null;
+    selection = resolveLanguageSlot(accents, targetLanguage) ?? null;
   }
   if (!selection || (!selection.accentId && !selection.query)) return undefined;
   const profile = getAccentProfile(selection.accentId);
@@ -27,7 +24,7 @@ export function resolveCharacterAccent(character: ReplayCharacter | undefined, t
 export function accentSynthesisHint(resolved?: ResolvedAccent): AccentSynthesisHint | undefined {
   if (!resolved || resolved.strength === 'off') return undefined;
   const rules = resolved.profile?.rules ?? [];
-  const enabled = resolved.selection.enabledRuleIds?.length
+  const enabled = Array.isArray(resolved.selection.enabledRuleIds)
     ? rules.filter(rule => resolved.selection.enabledRuleIds!.includes(rule.id))
     : rules.filter(rule => rule.defaultEnabled !== false);
   return {
@@ -46,7 +43,8 @@ export function accentTranslationHint(resolved?: ResolvedAccent): AccentTranslat
   if (!resolved) return undefined;
   const useRegionalVocabulary = !!resolved.selection.useRegionalVocabulary;
   const vocabularyHints = useRegionalVocabulary
-    ? (resolved.profile?.rules ?? []).filter(rule => rule.category === 'vocabulary').map(rule => rule.description)
+    ? (resolved.profile?.rules ?? []).filter(rule => rule.category === 'vocabulary'
+      && (Array.isArray(resolved.selection.enabledRuleIds) ? resolved.selection.enabledRuleIds.includes(rule.id) : rule.defaultEnabled !== false)).map(rule => rule.description)
     : [];
   return { id: resolved.profile?.id, label: resolved.profile?.label, useRegionalVocabulary, vocabularyHints };
 }

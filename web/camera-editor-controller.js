@@ -1,4 +1,5 @@
 import {
+  cleanCameraTransform,
   effectiveCameraTransform,
   setCameraTransform,
   inheritCameraTransform,
@@ -6,10 +7,6 @@ import {
 } from '../dist/index.js';
 
 function clamp(value,min,max){return Math.max(min,Math.min(max,value))}
-function cleanForZoom(transform){
-  const zoom=clamp(Number(transform.zoom)||1,1,4),half=.5/zoom;
-  return {x:clamp(Number(transform.x)||.5,half,1-half),y:clamp(Number(transform.y)||.5,half,1-half),zoom};
-}
 
 const SOURCE_LABEL={auto:'全景',manual:'手调',inherited:'继承'};
 
@@ -26,7 +23,7 @@ export class CameraDirectEditorController {
   exit(){if(!this.active)return;this.active=false;this.render()}
   inherit(){const {line}=this.current();if(!line)return;inheritCameraTransform(line);this.onMutation?.('镜头继承上一帧',`camera-inherit:${line.id}`)}
   reset(){const {line}=this.current();if(!line)return;resetCameraTransform(line);this.onMutation?.('镜头恢复全景',`camera-reset:${line.id}`)}
-  applyLive(line,perf,next){const clean=cleanForZoom(next);setCameraTransform(line,clean);if(perf){perf.cameraTransform={...clean};perf.cameraPlacementSource='manual'}this.onPreviewRefresh?.();return clean}
+  applyLive(line,perf,next){const clean=cleanCameraTransform(next);setCameraTransform(line,clean);if(perf){perf.cameraTransform={...clean};perf.cameraPlacementSource='manual'}this.onPreviewRefresh?.();return clean}
   beginPan(event){if(event.button!==0||event.target.closest('button,.camera-zoom-handle'))return;event.preventDefault();event.stopPropagation();
     const {line,perf}=this.current();if(!line||!perf)return;const bounds=this.host.getBoundingClientRect();const start=effectiveCameraTransform(line,perf),sx=event.clientX,sy=event.clientY;this.host.setPointerCapture?.(event.pointerId);this.host.classList.add('dragging');
     const move=e=>{const dx=(e.clientX-sx)/Math.max(1,bounds.width),dy=(e.clientY-sy)/Math.max(1,bounds.height);this.applyLive(line,perf,{...start,x:start.x-dx/start.zoom,y:start.y-dy/start.zoom})};

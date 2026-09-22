@@ -1,4 +1,5 @@
-import type { CharacterLayerSet, ImageSet, ReplayCharacter, ReplayProject } from '../core/types.js';
+import type { CharacterLayerSet, ImageSet, ReplayCharacter, ReplayProject, ReplayLine } from '../core/types.js';
+import { parseDirectorCommand, formatDirectorCommand } from '../core/directives.js';
 import { defaultFaceFit } from '../core/face.js';
 import { addCharacterAlias, normalizeCharacterNameKey } from '../core/character-name.js';
 import { defaultPuppetRig } from '../puppet/rig.js';
@@ -93,6 +94,19 @@ function uniqueMapped(ids: string[] | undefined, removedId: string, keepId: stri
   return [...new Set(ids.map(id => id === removedId ? keepId : id))];
 }
 
+function commandFor(project: ReplayProject, line: ReplayLine) {
+  return line.command ?? (line.type === 'command' ? parseDirectorCommand(project, line.text).command : null);
+}
+
+function remapNodeOverride(overrides: Record<string, ReplayProject['sceneGraph']['nodeOverrides'][string] | null> | undefined, removedId: string, keepId: string, conflicts: string[]): void {
+  if (!overrides) return;
+  const sourceKey = `character:${removedId}`, targetKey = `character:${keepId}`;
+  if (!Object.hasOwn(overrides, sourceKey)) return;
+  if (!Object.hasOwn(overrides, targetKey)) overrides[targetKey] = structuredClone(overrides[sourceKey]!);
+  else if (JSON.stringify(overrides[targetKey]) !== JSON.stringify(overrides[sourceKey])) conflicts.push('sceneGraph.nodeOverrides');
+  delete overrides[sourceKey];
+}
+
 function applyCharacterMerge(project: ReplayProject, keepId: string, mergeId: string): MergeCharactersResult {
   if (keepId === mergeId) throw new Error('不能把角色合并到自己。');
   const keep = project.characters.find(c => c.id === keepId);
@@ -137,7 +151,9 @@ function applyCharacterMerge(project: ReplayProject, keepId: string, mergeId: st
     if (keep.speech.pauseScale == null && source.speech.pauseScale != null) { keep.speech.pauseScale = source.speech.pauseScale; filled.push('speech.pauseScale'); }
     else if (keep.speech.pauseScale != null && source.speech.pauseScale != null && keep.speech.pauseScale !== source.speech.pauseScale) conflicts.push('speech.pauseScale');
     if (!keep.speech.translationProvider && source.speech.translationProvider) { keep.speech.translationProvider = source.speech.translationProvider; filled.push('speech.translationProvider'); }
+    else if (keep.speech.translationProvider && source.speech.translationProvider && keep.speech.translationProvider !== source.speech.translationProvider) conflicts.push('speech.translationProvider');
     if (!keep.speech.ttsProvider && source.speech.ttsProvider) { keep.speech.ttsProvider = source.speech.ttsProvider; filled.push('speech.ttsProvider'); }
+    else if (keep.speech.ttsProvider && source.speech.ttsProvider && keep.speech.ttsProvider !== source.speech.ttsProvider) conflicts.push('speech.ttsProvider');
     keep.speech.voices ??= {}; for (const [lang, voice] of Object.entries(source.speech.voices ?? {})) { if (!keep.speech.voices[lang]) { keep.speech.voices[lang] = structuredClone(voice); filled.push(`speech.voices.${lang}`); } else if (JSON.stringify(keep.speech.voices[lang]) !== JSON.stringify(voice)) conflicts.push(`speech.voices.${lang}`); }
     keep.speech.accents ??= {}; for (const [lang, accent] of Object.entries(source.speech.accents ?? {})) { if (!keep.speech.accents[lang]) { keep.speech.accents[lang] = structuredClone(accent); filled.push(`speech.accents.${lang}`); } else if (JSON.stringify(keep.speech.accents[lang]) !== JSON.stringify(accent)) conflicts.push(`speech.accents.${lang}`); }
   }
@@ -145,7 +161,18 @@ function applyCharacterMerge(project: ReplayProject, keepId: string, mergeId: st
   let linesReassigned = 0, stageRefsReassigned = 0;
   for (const line of project.lines) {
     if (line.speakerId === mergeId) { line.speakerId = keepId; linesReassigned += 1; }
-    const beforeStage = JSON.stringify([line.stageIds, line.stagePositions, line.stageTransforms, line.scene?.enterIds, line.scene?.exitIds]);
+    const stageSnapshot = () => JSON.stringify([line.stageIds, line.stagePositions, line.stageTransforms, line.scene, line.command, line.wheel]);
+    const beforeStage = stageSnapshot();
+    const command = commandFor(project, line);
+    if (command?.characterId === mergeId) {
+      line.command = { ...command, characterId: keepId, target: keep.name };
+      if (line.type === 'command') line.text = formatDirectorCommand(project, line.command);
+    }
+    for (const step of line.wheel?.steps ?? []) for (const option of step.options) {
+      if (option.characterId === mergeId) option.characterId = keepId;
+    }
+    // Null scene overrides mean reset; preserve them just like concrete overrides.
+    remapNodeOverride(line.scene?.sceneGraph?.nodeOverrides, mergeId, keepId, conflicts);
     line.stageIds = uniqueMapped(line.stageIds, mergeId, keepId);
     if (line.stagePositions?.[mergeId] !== undefined) {
       if (line.stagePositions[keepId] === undefined) line.stagePositions[keepId] = line.stagePositions[mergeId]!;
@@ -161,8 +188,11 @@ function applyCharacterMerge(project: ReplayProject, keepId: string, mergeId: st
       line.scene.enterIds = uniqueMapped(line.scene.enterIds, mergeId, keepId);
       line.scene.exitIds = uniqueMapped(line.scene.exitIds, mergeId, keepId);
     }
-    if (beforeStage !== JSON.stringify([line.stageIds, line.stagePositions, line.stageTransforms, line.scene?.enterIds, line.scene?.exitIds])) stageRefsReassigned += 1;
+    if (beforeStage !== stageSnapshot()) stageRefsReassigned += 1;
   }
+  const beforeOverrides = JSON.stringify(project.sceneGraph?.nodeOverrides);
+  remapNodeOverride(project.sceneGraph?.nodeOverrides, mergeId, keepId, conflicts);
+  if (beforeOverrides !== JSON.stringify(project.sceneGraph?.nodeOverrides)) stageRefsReassigned += 1;
 
   let assetMetadataReassigned = 0;
   for (const asset of project.assets) {
@@ -179,7 +209,7 @@ function applyCharacterMerge(project: ReplayProject, keepId: string, mergeId: st
 function mergeConflictGroup(path: string): CharacterMergeConflictGroup['id'] {
   if (path === 'kind' || path === 'showOnStage' || path === 'defaultPosition') return 'identity';
   if (path === 'stageFacing') return 'appearance';
-  if (path === 'stagePositions' || path === 'stageTransforms') return 'stage';
+  if (path === 'stagePositions' || path === 'stageTransforms' || path === 'sceneGraph.nodeOverrides') return 'stage';
   if (path === 'puppet' || path === 'faceFit' || path.startsWith('images.') || path.startsWith('layers.') || path.startsWith('expressions.') || path.startsWith('layerExpressions.')) return 'appearance';
   if (path === 'voice' || path.startsWith('speech.')) return 'speech';
   return 'other';
@@ -230,6 +260,32 @@ export function collectScriptCharacterIds(project: ReplayProject): Set<string> {
     for (const id of Object.keys(line.stageTransforms ?? {})) ids.add(id);
     for (const id of line.scene?.enterIds ?? []) ids.add(id);
     for (const id of line.scene?.exitIds ?? []) ids.add(id);
+    const command = commandFor(project, line);
+    if (command?.characterId) ids.add(command.characterId);
+    for (const step of line.wheel?.steps ?? []) for (const option of step.options) if (option.characterId) ids.add(option.characterId);
+    for (const key of Object.keys(line.scene?.sceneGraph?.nodeOverrides ?? {})) if (key.startsWith('character:')) ids.add(key.slice(10));
   }
   return ids;
+}
+
+/** Deleting never drops script content. Referenced characters must first be merged. */
+export function planCharacterRemoval(project: ReplayProject, characterId: string) {
+  const character = project.characters.find(item => item.id === characterId);
+  if (!character) throw new Error('找不到要删除的角色。');
+  const lines = project.lines.filter(line => line.speakerId === characterId);
+  const used = collectScriptCharacterIds(project).has(characterId);
+  return { characterId, name: character.name, lines: lines.length, canRemove: !used,
+    assetsRetained: project.assets.filter(asset => asset.metadata?.characterId === characterId).length };
+}
+
+export function removeCharacter(project: ReplayProject, characterId: string) {
+  const plan = planCharacterRemoval(project, characterId);
+  if (!plan.canRemove) throw new Error('这个角色仍有台词或舞台引用，请合并到正确角色后再清理。');
+  project.characters = project.characters.filter(item => item.id !== characterId);
+  if (project.sceneGraph?.nodeOverrides) delete project.sceneGraph.nodeOverrides[`character:${characterId}`];
+  for (const asset of project.assets) if (asset.metadata?.characterId === characterId) {
+    asset.metadata = { ...asset.metadata };
+    delete asset.metadata.characterId;
+  }
+  return plan;
 }

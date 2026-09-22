@@ -4,6 +4,8 @@ import { defaultFaceFit, normalizeFaceFit } from './face.js';
 import { normalizePuppetRig } from '../puppet/rig.js';
 import { parseDirectorCommand } from './directives.js';
 import { normalizeSceneGraphSettings } from './scene-graph.js';
+import { normalizeProsodyCurve } from '../speech/prosody.js';
+import { cleanCameraTransform } from './camera.js';
 
 /**
  * Normalize an imported / recovered ReplayProject into the current runtime shape.
@@ -29,6 +31,9 @@ export function normalizeReplayProject(input: ReplayProject | Record<string, any
   const legacyBgmVolume = incomingSettings.bgmVolume;
   const legacySfxVolume = incomingSettings.sfxVolume;
   project.settings = { ...DEFAULT_SETTINGS, ...incomingSettings };
+  // 0.53.2: spoken/TTS language is independent from the imported Log language.
+  // Old projects inherit Log language so their existing speech behavior does not change.
+  if (!incomingSettings.speechLanguage) project.settings.speechLanguage = 'auto';
   project.settings.audioMix = {
     ...DEFAULT_SETTINGS.audioMix,
     ...(incomingAudioMix ?? {}),
@@ -60,8 +65,8 @@ export function normalizeReplayProject(input: ReplayProject | Record<string, any
       hotspot.height = Math.max(0.01, Math.min(1 - hotspot.y, Number(hotspot.height) || 0.2));
     }
     object.transform ??= { x: 0.5, y: 0.5, scale: 0.6, rotation: 0 };
-    object.transform.x = Math.max(-0.5, Math.min(1.5, Number(object.transform.x) || 0.5));
-    object.transform.y = Math.max(-0.5, Math.min(1.5, Number(object.transform.y) || 0.5));
+    object.transform.x = Math.max(-0.5, Math.min(1.5, Number.isFinite(Number(object.transform.x)) ? Number(object.transform.x) : 0.5));
+    object.transform.y = Math.max(-0.5, Math.min(1.5, Number.isFinite(Number(object.transform.y)) ? Number(object.transform.y) : 0.5));
     object.transform.scale = Math.max(0.05, Math.min(4, Number(object.transform.scale) || 0.6));
     object.transform.rotation = Number.isFinite(Number(object.transform.rotation)) ? Number(object.transform.rotation) : 0;
     object.transform.depth = Number.isFinite(Number(object.transform.depth)) ? Math.max(0, Math.min(1, Number(object.transform.depth))) : 0;
@@ -120,6 +125,10 @@ export function normalizeReplayProject(input: ReplayProject | Record<string, any
     if (line.audioMix.voiceOffset !== undefined) line.audioMix.voiceOffset = Math.max(-2, Math.min(10, Number(line.audioMix.voiceOffset) || 0));
     if (line.audioMix.preRoll !== undefined) line.audioMix.preRoll = Math.max(0, Math.min(10, Number(line.audioMix.preRoll) || 0));
     if (line.audioMix.postRoll !== undefined) line.audioMix.postRoll = Math.max(0, Math.min(10, Number(line.audioMix.postRoll) || 0));
+    if (line.speech.prosodyCurve) {
+      try { line.speech.prosodyCurve = normalizeProsodyCurve(line.speech.prosodyCurve); }
+      catch { delete line.speech.prosodyCurve; }
+    }
     if (line.speech.punctuationPauses) {
       const timing = line.speech.punctuationPauses as any;
       timing.mode = timing.mode === 'uniform' ? 'uniform' : 'custom';
@@ -138,14 +147,7 @@ export function normalizeReplayProject(input: ReplayProject | Record<string, any
       if (raw.depth !== undefined) raw.depth = Number.isFinite(Number(raw.depth)) ? Math.max(0, Math.min(1, Number(raw.depth))) : 0;
     }
     if (line.cameraTransform !== undefined && line.cameraTransform !== null) {
-      const x = Number(line.cameraTransform.x), y = Number(line.cameraTransform.y), zoom = Number(line.cameraTransform.zoom);
-      const safeZoom = Number.isFinite(zoom) ? Math.max(1, Math.min(4, zoom)) : 1;
-      const half = 0.5 / safeZoom;
-      line.cameraTransform = {
-        x: Number.isFinite(x) ? Math.max(half, Math.min(1 - half, x)) : 0.5,
-        y: Number.isFinite(y) ? Math.max(half, Math.min(1 - half, y)) : 0.5,
-        zoom: safeZoom
-      };
+      line.cameraTransform = cleanCameraTransform(line.cameraTransform);
     }
     line.diceRolls ??= [];
     if (!('hitPoint' in line)) line.hitPoint = null;

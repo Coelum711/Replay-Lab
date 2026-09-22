@@ -60,8 +60,18 @@ The project intentionally interoperates with and/or adapts ideas or small implem
 
 Keep this file and the relevant license notices when redistributing derived builds.
 
+## Optional MLX clone/instruct companion (0.54.2)
 
-## Voicebox (optional external integration)
-- Project: https://github.com/jamiepine/voicebox
-- License: MIT
-- Replay Lab does **not** bundle Voicebox code, models, or binaries. The optional integration calls a separately installed local Voicebox service through Replay Lab's narrow localhost bridge.
+- **mlx-audio** (MIT): https://github.com/Blaizzy/mlx-audio . Installed separately at commit `04839707811dbe2d5cc61e2a425909eb8399dc59`. The new adapter calls its input-assembly and generation methods via a read-through speaker-injection view. No MLX source or weights are bundled in this ZIP.
+- **Qwen3-TTS** (Apache-2.0): https://github.com/QwenLM/Qwen3-TTS . Users explicitly download the MLX Community 1.7B Base/CustomVoice conversions. Preserve upstream notices if distributing model weights separately.
+- **Voicebox**: https://github.com/jamiepine/voicebox . The companion reads profile metadata and exported sample ZIPs via HTTP; it does not copy or patch Voicebox source.
+- The previously discussed third-party C Qwen engine is not included or used by this MLX implementation.
+
+
+## Desktop runtime (0.55.0)
+
+The desktop distribution bundles Electron 44.3.0 (MIT) and Chromium third-party components. The unmodified runtime LICENSE and LICENSES.chromium.html accompany the Mac application. Build tooling uses @electron/packager 20.3.0. The Replay Lab application and its full corresponding source remain GPL-3.0-only.
+
+## SoundTouchJS 2.1.1
+
+本地语调微调使用 @soundtouchjs/core 2.1.1 与 @soundtouchjs/interpolation-strategy-lanczos 2.1.1（MPL-2.0）。可读 JavaScript、包说明及许可声明位于 web/vendor/soundtouch；来源与唯一导入路径修改见其中 REPLAYLAB-NOTICE.md。

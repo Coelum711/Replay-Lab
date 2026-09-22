@@ -1,0 +1,22 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Replay Lab · 本机情绪桥</title>
+<style>body{max-width:760px;margin:40px auto;padding:20px;font:16px/1.65 system-ui;background:#101219;color:#edf2ff}pre{white-space:pre-wrap;background:#181c25;padding:16px;border-radius:12px}a{color:#a9b4ff}button{padding:10px;cursor:pointer}</style>
+<h1>本机克隆情绪桥</h1><p>复用 Voicebox 克隆 Profile 的现有参考音频，提取一次声纹后缓存。只在本机运行，不更改 Voicebox，不自动下载模型。</p>
+<p>当前实现：MLX <b>1.7B Base → 1.7B CustomVoice</b>。你已有的 0.6B Base 继续用于稳定克隆；它不能提供匹配 1.7B 的声纹。声音相似度和情绪效果仍需试听验证。</p>
+<p>返回 Replay Lab 的声音页，点击“检查情绪桥”，选择克隆 Profile，再选择“实验：克隆 + 情绪”。</p>
+<button id="refresh">重新检查（不会下载）</button><pre id="state">检查中…</pre>
+<script>
+async function refresh(){
+  const el=document.getElementById('state');
+  try{
+    const s=await(await fetch('/health')).json();
+    el.textContent=[s.ready?'依赖与模型缓存就绪（不代表推理/音质验证通过）':'尚未就绪：',
+      ...Object.entries(s.models).map(([k,v])=>k+'：'+(v.cached?'已缓存':k==='0.6B-Base'?'未缓存（不影响本桥）':v.reason)),
+      'Apple Silicon / 完整运行环境：'+s.runtime_ready,
+      '固定版本适配器：'+(s.adapter_compatible?'通过':'未安装或不匹配，请运行安装器'),
+      '缺少依赖：'+(Object.entries(s.dependencies||{}).filter(([,v])=>!v).map(([k])=>k).join(', ')||'无'),
+      'Voicebox：'+s.voicebox_url,'生成中：'+s.busy].join('\n');
+  }catch(e){el.textContent=e.message}
+}
+document.getElementById('refresh').onclick=refresh;refresh();
+</script></html>

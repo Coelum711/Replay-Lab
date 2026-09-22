@@ -47,13 +47,15 @@ export class StageDirectEditorController {
   projection(){return this.getProject?.()?.sceneGraph?.projection==='2.5d'?'2.5d':'flat'}
 
   styleActorControl(el,transform){
-    const projected=projectStageTransform(transform,this.projection());
+    const camera=this.getPerformanceLine?.()?.cameraTransform||{x:.5,y:.5,zoom:1};
+    const projected=projectStageTransform(transform,this.projection(),camera);
+    projected.x=.5+(projected.x-camera.x)*camera.zoom;projected.y=.5+(projected.y-camera.y)*camera.zoom;projected.scale*=camera.zoom;
     el.style.left=`${clamp(projected.x,-.2,1.2)*100}%`;
     el.style.top=`${clamp(projected.y,-.1,1.15)*100}%`;
     const scale=clamp(projected.scale,.22,2.5);
     el.style.width=`${clamp(20*scale,9,42)}%`;
     el.style.height=`${clamp(48*scale,15,76)}%`;
-    el.style.zIndex=String(1000-Math.round(clamp(projected.depth,0,1)*700));
+    el.style.zIndex=String(1000-Math.round(clamp(projected.viewDepth??projected.depth,-1,2)*350));
     el.dataset.depth=String(projected.depth);
   }
 
@@ -62,7 +64,7 @@ export class StageDirectEditorController {
     event.preventDefault();event.stopPropagation();actorEl.setPointerCapture?.(event.pointerId);
     const bounds=this.host.getBoundingClientRect();const start=effectiveStageTransform(line,stage,actor.characterId);const startX=event.clientX,startY=event.clientY;
     actorEl.classList.add('dragging');
-    const move=e=>{const rawDx=(e.clientX-startX)/Math.max(1,bounds.width),rawDy=(e.clientY-startY)/Math.max(1,bounds.height);const delta=unprojectStageDragDelta(rawDx,rawDy,Number(start.depth)||0,this.projection());let x=start.x+delta.dx,y=start.y+delta.dy;x=nearestSnap(clamp(x,-.2,1.2),X_SNAPS,.025);y=nearestSnap(clamp(y,-.1,1.15),Y_SNAPS,.022);const next={...start,x,y};setStageActorTransform(line,stage,actor.characterId,next);actor.transform={...next};actor.placementSource='manual';this.styleActorControl(actorEl,next);this.onPreviewRefresh?.()};
+    const move=e=>{const rawDx=(e.clientX-startX)/Math.max(1,bounds.width),rawDy=(e.clientY-startY)/Math.max(1,bounds.height);const delta=unprojectStageDragDelta(rawDx,rawDy,Number(start.depth)||0,this.projection(),this.getPerformanceLine?.()?.cameraTransform,start);let x=start.x+delta.dx,y=start.y+delta.dy;x=nearestSnap(clamp(x,-.2,1.2),X_SNAPS,.025);y=nearestSnap(clamp(y,-.1,1.15),Y_SNAPS,.022);const next={...start,x,y};setStageActorTransform(line,stage,actor.characterId,next);actor.transform={...next};actor.placementSource='manual';this.styleActorControl(actorEl,next);this.onPreviewRefresh?.()};
     const up=()=>{actorEl.classList.remove('dragging');actorEl.removeEventListener('pointermove',move);actorEl.removeEventListener('pointerup',up);actorEl.removeEventListener('pointercancel',up);this.onMutation?.('拖动角色位置',`stage-transform:${line.id}:${actor.characterId}`)};
     actorEl.addEventListener('pointermove',move);actorEl.addEventListener('pointerup',up);actorEl.addEventListener('pointercancel',up);
   }

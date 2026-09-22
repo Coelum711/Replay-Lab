@@ -2,17 +2,26 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Replay Lab 0.53.2-dev · 声音</title>
+<title>Replay Lab 0.57.0-dev · 声音</title>
 <style>
 :root{--bg:#101219;--panel:#181c25;--panel2:#111620;--line:#30384b;--text:#edf2ff;--muted:#98a3bc;--accent:#6774e8;--ok:#76d5ae;--warn:#d6bf72;--bad:#e38b8b}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif;padding:18px}button,input,select,textarea{font:inherit}button{background:#283044;color:var(--text);border:1px solid #3a4662;border-radius:9px;padding:7px 11px;cursor:pointer}button.primary{background:var(--accent)}button:disabled{opacity:.5;cursor:not-allowed}input,select,textarea{background:#0e131c;color:var(--text);border:1px solid var(--line);border-radius:9px;padding:8px 9px;width:100%}textarea{resize:vertical}.shell{max-width:1040px;margin:auto;display:grid;gap:12px}.top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.top h1{font-size:18px;margin:0}.top .grow{flex:1}.top a{color:#a9b4ff}.card{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:12px}.stack{display:grid;gap:9px}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.muted,.label,label small{color:var(--muted);font-size:12px}.model-card{border-color:#39534c;background:#111a17}.model-status{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.progress{height:8px;background:#0b0f15;border:1px solid var(--line);border-radius:999px;overflow:hidden}.progress>div{height:100%;width:0;background:linear-gradient(90deg,#6774e8,#5bb99d);transition:width .15s}.speech-status{font-size:12px;padding:4px 8px;border-radius:999px;background:#0e131c;border:1px solid var(--line)}.speech-status.ok{color:var(--ok);border-color:#315a4d}.speech-status.busy{color:#d8ce8d;border-color:#5d5633}.speech-status.error{color:#ee9c9c;border-color:#704147}details.card>summary{cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center;font-weight:650;list-style:none}details.card>summary::-webkit-details-marker{display:none}details.card>summary:after{content:"›";font-size:18px;color:var(--muted);transform:rotate(0deg);transition:.15s}details.card[open]>summary:after{transform:rotate(90deg)}.disclosure{margin-top:12px}.field-grid{display:grid;grid-template-columns:minmax(150px,190px) minmax(0,1fr);gap:9px;align-items:center}.field-grid label,.accent-controls label,.voice-controls label{display:grid;gap:3px}.character-card{padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel2)}.character-head{display:flex;gap:8px;align-items:baseline;justify-content:space-between}.accent-area,.voice-area{padding-top:4px}.accent-controls{display:grid;grid-template-columns:minmax(220px,1fr) 150px auto;gap:9px;align-items:end}.voice-controls{display:grid;grid-template-columns:180px minmax(220px,1fr) minmax(180px,1fr);gap:9px;align-items:end}.check-label{display:flex!important;align-items:center;gap:6px;padding-bottom:8px}.check-label input{width:auto}.accent-results,.accent-details{display:grid;gap:5px}.accent-result{display:flex;justify-content:space-between;align-items:center;text-align:left;background:#151b28}.accent-result span:first-child{display:grid}.accent-rules{border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:#0e131c}.accent-rules summary{cursor:pointer;font-weight:650}.rule-group{display:grid;gap:5px;margin:8px 0}.rule-title{font-size:12px;color:var(--muted);text-transform:uppercase}.rule-row{display:grid!important;grid-template-columns:auto 1fr;gap:8px;align-items:start;padding:4px 0}.rule-row input{width:auto;margin-top:3px}.rule-row span{display:grid;gap:2px}.rule-row small,.rule-examples,.voice-note,.free-voice-hint,.warning-note{font-size:12px;color:var(--muted)}.voice-action-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.audio-player{width:100%;height:34px}.line-preview{padding:11px;border-radius:10px;background:#0e1118;border:1px solid var(--line)}pre{white-space:pre-wrap;word-break:break-word;max-height:480px;overflow:auto;background:#0e1118;padding:12px;border-radius:10px}.voice-empty{padding:16px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:10px}.voice-list{display:grid;grid-template-columns:minmax(220px,1fr) auto auto;gap:8px;align-items:center}.batch-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.mini-progress{min-width:160px;flex:1}.voice-controls.free-loaded{grid-template-columns:180px minmax(260px,1fr)}
 @media(max-width:760px){body{padding:10px}.field-grid,.accent-controls,.voice-controls{grid-template-columns:1fr}.top .grow{display:none}}
 .boot-guard{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:120;width:min(720px,calc(100vw - 24px));padding:10px 12px;border:1px solid #665c35;border-radius:10px;background:#211e13;color:#f2dda0}.boot-guard[hidden]{display:none!important}body.boot-blocked main,body.boot-blocked .shell,body.boot-blocked>.top{opacity:.58;pointer-events:none}</style>
+<style>[hidden]{display:none!important}</style>
+<link rel="stylesheet" href="./studio-theme.css">
 </head>
-<body>
+<body class="voice-shell">
+<header class="app-bar">
+  <a class="app-brand" href="#" id="appBrand"><img src="../desktop/assets/mark.svg" alt=""><span>Replay Lab</span><small>STUDIO</small></a>
+  <nav class="app-nav" aria-label="主要工作区"><button id="appHome" aria-current="page">首页</button><button id="appEditor">制作</button><button id="appVoice">声音</button></nav>
+  <div class="app-bar-right"><span class="app-local">本地工作区</span><button class="app-settings" id="appSettings">⚙ 设置</button></div>
+</header>
+<dialog id="appSettingsDialog" class="settings-dialog"><div class="settings-heading"><h2>语言与声音设置</h2><button id="closeAppSettings" aria-label="关闭设置">×</button></div><div class="settings-body" id="appSettingsBody"><p>设置当前工程的默认朗读方式。角色和单句的自定义设置仍然优先，画面字幕保持原文。</p></div><div class="settings-footer"><span>Replay Lab 0.57.0-dev</span><button id="settingsVoice" class="primary">声音与连接 →</button></div></dialog>
 <div id="bootGuard" class="boot-guard" role="alert" aria-live="assertive">声音页正在加载…</div>
 <script>(()=>{const g=document.getElementById('bootGuard');let ok=false;const fail=m=>{if(ok)return;document.body.classList.add('boot-blocked');g.hidden=false;g.textContent=m};window.__replayLabMarkBootReady=()=>{ok=true;document.body.classList.remove('boot-blocked');g.hidden=true};window.__replayLabBootFail=fail;if(location.protocol==='file:')fail('声音页不能直接用 file:// 打开。请从 Replay Lab 根目录运行 START_REPLAY_LAB 启动器。');setTimeout(()=>{if(!ok)fail('声音页脚本没有成功启动。请使用根目录启动器，或检查浏览器控制台。')},2500);window.addEventListener('error',e=>{if(!ok&&e.message)fail('声音页启动异常：'+e.message)},true)})();</script>
 <div class="shell">
+  <section id="studioLinkCard" class="card stack" hidden><strong id="studioLinkState"></strong><div class="muted">与 Studio 共用当前工程。语言和声音修改会同步回主窗口，由同一份工程保存。</div><div class="row"><button id="focusStudio" type="button">返回主窗口</button><button id="exportVoiceDraft" type="button">导出工程 JSON 备份</button></div></section>
   <div class="top"><a id="returnStudio" href="./studio.html" target="replaylab-studio">← Replay Studio</a><h1>声音</h1><span class="muted">角色选声 / TTS</span><span class="grow"></span><span id="status" class="muted">先打开工程或导入一段 Log。</span></div>
 
   <section class="card stack model-card">
@@ -23,11 +32,17 @@
     <div class="row"><button id="loadFreeModel" class="primary">后台加载免费声音</button><button id="cancelFreeModel" class="danger" hidden>取消加载</button><button id="retryFreeModel" hidden>重新下载</button><button id="retryFreeModelWasm" hidden>用 WASM 重试</button><button id="checkFreeModelNetwork" class="small">检查下载连接</button></div>
   </section>
 
-  <section class="card stack model-card" id="voiceboxCard">
-    <div class="model-status"><strong>Voicebox Local（可选）</strong><span id="voiceboxState" class="speech-status">未检测</span></div>
-    <div class="muted">先单独安装并启动 Voicebox。Replay Lab 通过启动器内置的 localhost bridge 连接，不直接跨域访问 17493，也不会自动安装 Voicebox。</div>
-    <div id="voiceboxDetail" class="muted">首次使用某个 Voicebox 引擎时，模型下载仍由 Voicebox 自己管理；Replay Lab 只读取 Profile 并请求生成。</div>
-    <div class="row"><button id="testVoicebox">检测 Voicebox</button><span class="muted">推荐始终从 START_REPLAY_LAB 启动本工具。</span></div>
+
+  <section class="card stack model-card">
+    <div class="model-status"><strong>Voicebox Local（可选）</strong><span id="voiceboxState" class="speech-status">未检查</span></div>
+    <div class="muted">单独安装 Voicebox 后，Replay Lab 只连接本机 API，不下载 Voicebox 本体或模型。首次使用某个 Voicebox 引擎时，Voicebox 自己可能下载对应模型。</div>
+    <div class="row"><input id="voiceboxEndpoint" value="http://127.0.0.1:17493" style="max-width:320px"><button id="checkVoicebox" class="small">检查连接</button></div>
+    <div id="voiceboxDetail" class="muted">推荐保持 localhost；Voicebox API 默认无认证，不建议暴露到不可信网络。</div>
+    <details><summary>实验：本机克隆情绪桥</summary><div class="stack disclosure">
+      <p class="muted">先运行根目录 INSTALL_VOICE_BRIDGE.command（一次），再运行 START_VOICE_BRIDGE.command。桥仅支持 MLX 1.7B 文字情绪；0.6B 保留稳定克隆。检查连接不会下载模型。</p>
+      <div class="row"><input id="bridgeEndpoint" value="http://127.0.0.1:17494" aria-label="情绪桥地址"><button id="checkBridge" type="button">检查情绪桥</button><button id="openBridgeStatus" type="button">打开状态页</button></div>
+      <div id="bridgeState" class="muted">尚未检查。普通 Voicebox 与情绪桥是两个不同地址。</div>
+    </div></details>
   </section>
 
   <details class="card" id="voiceWorkspaceDetails">
@@ -43,9 +58,14 @@
     <div class="stack disclosure">
       <textarea id="input" rows="6" placeholder="Arthur: I want to inspect that door.\nFrancis: I do not think that is a good idea."></textarea>
       <div class="row"><button id="parse" class="primary">自动解析</button><button id="fillVoiceSample">填入示例</button><select id="template"></select></div>
-      <div class="row"><label class="muted">Log 语言 <input id="logLanguage" value="en-GB" placeholder="auto / zh-CN / en-GB"></label><button id="compile">刷新演出</button></div>
+
     </div>
   </details>
+
+  <section class="card stack"><strong>工程语言与声音</strong>
+      <div class="row"><label class="muted">Log 语言 <input id="logLanguage" value="en-GB" placeholder="auto / zh-CN / en-GB"></label><label class="muted">统一朗读语言 <input id="speechLanguage" value="auto" list="languageOptions" placeholder="auto / zh-CN / en-GB"></label><button id="compile">刷新演出</button></div><div class="muted">Log 语言用于理解原始文本；统一朗读语言用于 TTS。角色/单句可继续覆盖。</div>
+    <label>默认声音服务<select id="defaultTtsProvider"><option value="replaylab-free">Replay Lab Free（浏览器）</option><option value="voicebox-local">Voicebox Local</option></select></label>
+  </section>
 
   <section class="card stack">
     <div><strong>角色声音</strong><div class="muted">通常只需要选默认语言和 Voice。口音 / 地区属于可选高级控制，默认折叠在每个角色下面。</div><div class="muted">TTS 若提供音素时间：语言专用规则 → 通用发音口型 → A/I/U/E/O → 开/闭嘴；小众语言不需要单独画完整音素库。</div></div>
@@ -56,13 +76,40 @@
     <div><strong>当前单句</strong><div class="muted">用于试听某一句，不影响画面字幕。</div></div>
     <div class="row"><select id="lineSelect"></select><label class="muted">语音语言覆盖 <input id="lineLanguage" placeholder="留空 = 继承"></label></div>
     <div id="linePreview" class="line-preview"></div>
+    <details><summary>本句表演指令</summary><div class="stack disclosure">
+      <label class="check-label"><input id="lineActingOverride" type="checkbox">单独设置本句情绪（取消则继承角色）</label>
+      <label>表演指令<textarea id="lineInstruct" rows="2" disabled placeholder="例如：压低声音，克制愤怒；最后两个词加重。留空表示本句不附加情绪指令。"></textarea></label>
+      <label>本句 Seed<input id="lineSeed" type="number" min="0" max="4294967295" step="1" disabled placeholder="留空使用角色 Seed"></label>
+      <small class="muted">保持角色 Profile 继承；实验模式下生效。已有音频不会因编辑指令而自动重新生成。</small>
+    </div></details>
     <div class="voice-action-row"><button id="synthLine" class="primary">生成并试听</button><button id="downloadLineAudio" disabled>下载当前音频</button><span id="lineSpeechState" class="speech-status">未生成</span></div>
     <audio id="lineAudioPreview" class="audio-player" controls style="display:none"></audio>
-    <details><summary class="muted">翻译测试</summary><div class="row disclosure"><input id="translateEndpoint" value="http://localhost:5000" style="max-width:320px"><button id="translateLine">翻译当前句</button></div></details>
+    <details id="prosodyEditor" class="prosody-editor"><summary>语调曲线 · 单句细调</summary>
+      <div class="stack disclosure">
+        <div class="row"><label>录音来源<select id="prosodySource"><option value="">当前工程录音</option></select></label><button id="prosodyLoad">载入录音与波形</button><button id="prosodyReset">曲线归零</button></div>
+        <p id="prosodyWords" class="prosody-words"></p>
+        <div class="prosody-axis"><span>↑ 提高音调 · 最多 4 半音</span><span>平线 = 保留自然起伏</span></div>
+        <svg id="prosodyCurve" viewBox="0 0 700 200" role="group" aria-label="拖动控制点调整当句音高，上下方向键每次调整 0.1 半音"></svg>
+        <div class="prosody-axis"><span>句首</span><span>↓ 降低音调</span><span>句尾</span></div>
+        <small class="muted">灰色波形为载入的来源录音，橙线为所选试听版本的播放进度。</small>
+        <div class="row"><label>控制点<select id="prosodyPosition"></select></label><label class="prosody-slider">音高调整<input id="prosodyAmount" type="range" min="-4" max="4" step="0.1" value="0"></label><output id="prosodyValue">0.0 半音</output></div>
+        <div class="row"><button id="prosodyFineTune" class="primary">试听微调 · 本地</button><button id="prosodyReenact">按曲线重录 · 实验情绪</button><button id="prosodyCancel" hidden>取消等待</button></div>
+        <small id="prosodyModeHint" class="muted"></small>
+        <small class="muted">微调从载入的原录音重新计算，保留总时长。较大调整可能改变音色；首尾 25 毫秒逐渐保留原声。横轴为录音时间比例，字词位置仅供参考。</small>
+        <details><summary>查看重录表演提示</summary><p id="prosodyPrompt" class="prosody-prompt"></p></details>
+        <div id="prosodyStatus" role="status" aria-live="polite">曲线默认为零，不影响普通生成。</div>
+        <label>试听版本<select id="prosodyTake"></select></label><small id="prosodyTakeInfo" class="muted"></small>
+        <audio id="prosodyAudio" class="audio-player" controls hidden></audio>
+        <div class="row"><button id="prosodyAdopt" class="primary">采用所选版本</button><button id="prosodyDownload">下载所选版本</button><button id="prosodyDelete">删除候选</button></div>
+        <small class="muted">采用后随工程保存，旧素材保留，可从录音来源重新载入。未采用候选仅留在本次窗口，关闭前请下载。</small>
+      </div>
+    </details>
+    <details><summary class="muted">翻译测试</summary><div class="row disclosure"><input id="translateEndpoint" value="http://localhost:5000" style="max-width:320px" aria-label="翻译服务地址"><button id="useLibreTranslate">将 LibreTranslate 设为工程翻译服务</button><button id="translateLine">翻译当前句</button></div><small class="muted">修改连接地址不会改写工程的翻译服务。角色或单句的自定义服务仍优先。</small></details>
   </section>
 
   <details class="card"><summary>调试：Performance JSON</summary><pre id="output" class="disclosure"></pre></details>
   <datalist id="languageOptions"><option value="en-GB"><option value="en-US"><option value="en-IN"><option value="en-AU"><option value="en-CA"><option value="fr-FR"><option value="de-DE"><option value="ja-JP"><option value="zh-CN"></datalist>
 </div>
 <script type="module" src="./app.js"></script>
+<script type="module" src="./desktop-ui.js"></script>
 </body></html>

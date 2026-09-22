@@ -1,9 +1,13 @@
 import { StageDirectEditorController } from './stage-editor-controller.js';
+import { SceneViewportController } from './scene-viewport-controller.js';
 import { CameraDirectEditorController } from './camera-editor-controller.js';
 import { CharacterIdentityController } from './character-identity-controller.js';
 import { FacePackageController } from './face-package-controller.js';
 import { FaceFitController, FACE_FEATURE_LABELS, FACE_BASIC_FEATURES, FACE_SPLIT_FEATURES, faceFeatureEditorMarkup } from './face-fit-controller.js';
 import { CharacterSpeechController } from './character-speech-controller.js';
+import { ProjectLinkHost } from './project-link.js';
+import { createExportSession } from './export-session.js';
+import './desktop-client.js';
 import { VirtualScriptList } from './virtual-script-list.js';
 import { CustomObjectEditorController } from './custom-object-editor-controller.js';
 import { AudioWorkbenchController } from './audio-workbench-controller.js';
@@ -98,6 +102,7 @@ let selectedIndex = 0;
 let selectedBeatId = null;
 let stageDirectEditor = null;
 let cameraDirectEditor = null;
+let sceneViewport = null;
 let playbackCursorTime = 0;
 let workspace = null;
 let workspaceConflict = false;
@@ -120,6 +125,28 @@ let saveTimer = null;
 const runtimeFiles = new Map();
 const history = new ProjectHistory({limit:120,coalesceMs:750});
 const recoveryStore = new IndexedDbProjectRecoveryStore();
+const voiceHost = new ProjectLinkHost({
+  owner:window, getProject:()=>project, getWorkspace:()=>workspace,
+  getSelectedLineId:()=>currentLine()?.id,
+  putAudio:(id,blob)=>runtimeFiles.set(id,blob), readAudio:id=>resolveAsset(id),
+  async onChanged(immediate){
+    scheduleSave('声音工作台修改','voice-workbench');
+    invalidateMediaCaches();renderAll();
+    return immediate ? await saveIfConnected() : true;
+  }
+});
+let voiceWindow=null;
+function openVoiceWorkbench(){
+  if(!voiceWindow||voiceWindow.closed)voiceWindow=window.open('./index.html','replaylab-voice');
+  if(!voiceWindow){$('#importStatus').textContent='浏览器拦截了声音窗口，请允许本机页面弹出窗口。';return;}
+  if(typeof voiceWindow.__connectReplayLabHost==='function')voiceWindow.__connectReplayLabHost(voiceHost);
+  voiceWindow.focus();
+}
+window.addEventListener('message',event=>{
+  if(event.origin===location.origin&&event.source===voiceWindow&&event.data?.type==='replaylab:voice-ready'){
+    voiceWindow.__connectReplayLabHost?.(voiceHost);
+  }
+});
 let recoveryTimer = null;
 let recoverySnapshot = null;
 const selectedLineIds = new Set();
@@ -130,6 +157,7 @@ let lastSelectionIndex = null;
 let performanceClipboard = null;
 let activeView = 'script';
 let selectedCharacterId = null;
+let characterBrowser = { projectId: null, query: '', kind: '', scrollTop: 0 };
 let scriptVirtualList = null;
 let objectEditors = [];
 let audioWorkbench = null;
@@ -238,10 +266,10 @@ function showWorkspaceConflict(error){
   $('#reloadWorkspace').hidden=false;$('#saveProject').disabled=true;
   $('#workspaceDetail').textContent=`检测到另一个 Replay Lab 窗口或程序修改了工程目录。为避免覆盖，本页已停止自动保存。若要保留本页改动，请先导出 Project JSON；然后点“重新载入目录版本”。${error?.message?` · ${error.message}`:''}`;
 }
-async function chooseWorkspace(){
+async function chooseWorkspace(recentId){
   const previousWorkspace=workspace;
   try{
-    const chosen=await BrowserFileSystemWorkspace.choose();
+    const chosen=await BrowserFileSystemWorkspace.choose({recentId:typeof recentId==='string'?recentId:undefined});
     const existing=await chosen.loadProject();
     if(existing&&project?.lines?.length&&!confirm(`所选目录已有工程「${existing.title||'未命名 Replay'}」。打开它会替换当前 ${project.lines.length} 行工程。继续吗？`)){workspace=previousWorkspace;return}
     workspace=chosen;workspaceConflict=false;workspaceSummary={media:null,projectSaved:false};$('#reloadWorkspace').hidden=true;
@@ -282,8 +310,10 @@ function compile(){
   if(!project)return;
   $('#projectTitle').value=project.title||'';
   if($('#globalPauseScale')){$('#globalPauseScale').value=String(project.settings.speechPauseScale??1);$('#globalPauseScaleValue').textContent=`${Number(project.settings.speechPauseScale??1).toFixed(1)}×`;}
+  if($('#projectSpeechLanguage')) $('#projectSpeechLanguage').value=project.settings.speechLanguage||'auto';
+  $('#projectTtsProvider').value=project.settings.ttsProvider||'replaylab-free';
   const ready=project.lines.length>0;
-  $('#emptyState').hidden=ready;$('#stageReady').hidden=!ready;if($('#workbench'))$('#workbench').hidden=!ready;$('#exportWebm').disabled=!ready;$('#exportMp4').disabled=!ready;syncCenterContext();
+  $('#emptyState').hidden=ready;$('#stageReady').hidden=!ready;if($('#workbench'))$('#workbench').hidden=!ready;$('#exportWebm').disabled=!ready||exportBusy;$('#exportMp4').disabled=!ready||exportBusy;syncCenterContext();
   if(!ready){
     player?.stop();performanceDoc=null;$('#compileState').textContent='等待 Log';$('#compileState').className='status';$('#summary').textContent=`${project.characters.length} 角色 · ${project.assets.length} 素材`;const canvas=$('#stageCanvas'),ctx=canvas?.getContext?.('2d');if(ctx){ctx.clearRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#090c12';ctx.fillRect(0,0,canvas.width,canvas.height)}renderState();updateDiagnosticsSummary();return;
   }
@@ -580,26 +610,30 @@ function characterSetupCallout(character,activeFaceTemplate){
 }
 
 function renderCharacters(){
+  if(characterBrowser.projectId!==project.id)characterBrowser={projectId:project.id,query:'',kind:'',scrollTop:0};
   const host=$('#characterView');host.innerHTML='';
   const usedCharacterIds=collectScriptCharacterIds(project);
   const retainedOnlyCount=Math.max(0,project.characters.length-usedCharacterIds.size);
   const tools=document.createElement('div');tools.className='card stack';tools.innerHTML=`<div class="row"><strong>角色</strong><span class="muted">${project.characters.length} 个 · 当前剧本 ${usedCharacterIds.size} 个</span><button data-face-package-folder class="small" style="margin-left:auto">导入一整包角色图片</button><input data-face-package-files type="file" accept="image/*" webkitdirectory multiple hidden><button data-add-character class="small">+ 角色</button></div><div class="low-attention-callout"><strong>没有立绘也完全没关系。</strong><div>从文字 Log 导入的角色会先用占位形象；不想处理美术时，直接继续写剧本就行。</div></div><div data-face-package-preview class="stack face-package-preview" hidden></div><div class="grid2"><label class="muted">查找角色<input data-character-search placeholder="输入名字"></label><label class="muted">筛选<select data-character-kind><option value="">全部</option><option value="normal">角色</option><option value="npc">NPC</option><option value="kp">KP / GM</option><option value="system">系统</option></select></label></div><label class="checkrow"><input data-character-used-only type="checkbox" ${uiPrefs.characterUsedOnly?'checked':''} ${usedCharacterIds.size?'':'disabled'}><span><strong>只看当前剧本使用的角色</strong><span class="muted" style="display:block">${retainedOnlyCount?`另有 ${retainedOnlyCount} 个角色仅保留素材 / 声音设置；这里可以暂时隐藏，不会删除。`:'当前没有额外保留角色。'}</span></span></label><details><summary>一整包图片怎么命名？</summary><div class="disclosure-body">${faceNamingGuideMarkup({packageMode:true})}</div></details>`;
-  tools.querySelector('[data-add-character]').onclick=()=>{let i=1,name='角色1';while(project.characters.some(c=>c.name===name))name=`角色${++i}`;const created=createCharacter(name);project.characters.push(created);selectedCharacterId=created.id;scheduleSave('新增角色','character-add');renderAll()};const packageButton=tools.querySelector('[data-face-package-folder]'),packageInput=tools.querySelector('[data-face-package-files]'),packagePreview=tools.querySelector('[data-face-package-preview]');new FacePackageController({project,escapeHtml,pathOf:faceAutobindPath,slotOptions:faceAutobindSlotOptions,slotLabel:faceAutobindSlotLabel,onApply:applyFacePackageImport}).mount({button:packageButton,input:packageInput,preview:packagePreview});host.append(tools);bindFaceNamingGuide(tools);
-  if(project.characters.length>1){
-    new CharacterIdentityController({
+  tools.querySelector('[data-add-character]').onclick=()=>{let i=1,name='角色1';while(project.characters.some(c=>c.name===name))name=`角色${++i}`;const created=createCharacter(name);project.characters.push(created);selectedCharacterId=created.id;characterBrowser.query='';characterBrowser.kind='';characterBrowser.scrollTop=0;uiPrefs.characterUsedOnly=false;saveUiPrefs();scheduleSave('新增角色','character-add');renderAll()};const packageButton=tools.querySelector('[data-face-package-folder]'),packageInput=tools.querySelector('[data-face-package-files]'),packagePreview=tools.querySelector('[data-face-package-preview]');new FacePackageController({project,escapeHtml,pathOf:faceAutobindPath,slotOptions:faceAutobindSlotOptions,slotLabel:faceAutobindSlotLabel,onApply:applyFacePackageImport}).mount({button:packageButton,input:packageInput,preview:packagePreview});host.append(tools);bindFaceNamingGuide(tools);
+  const identityController=new CharacterIdentityController({
       project,
       escapeHtml,
       setStatus: message=>{$('#importStatus').textContent=message},
-      onMerged: ({keep,source,result})=>{selectedCharacterId=keep.id;scheduleSave('合并重复角色',`character-merge:${keep.id}:${source.id}`);renderAll();$('#importStatus').textContent=`角色合并：${source.name} → ${keep.name} · ${result.linesReassigned} 句台词 · ${result.stageRefsReassigned} 处舞台引用${result.conflicts.length?` · ${result.conflicts.length} 个素材/设置冲突保留了目标角色版本`:''}`}
-    }).mount(host);
-  }
+      onMerged: ({keep,source,result})=>{selectedCharacterId=keep.id;characterBrowser.query='';characterBrowser.kind='';invalidateMediaCaches();scheduleSave('合并重复角色',`character-merge:${keep.id}:${source.id}`);renderAll();$('#importStatus').textContent=`角色合并：${source.name} → ${keep.name} · ${result.linesReassigned} 句台词 · ${result.stageRefsReassigned} 处舞台引用${result.conflicts.length?` · ${result.conflicts.length} 个素材/设置冲突保留了目标角色版本`:''}`},
+      onRemoved: result=>{selectedCharacterId=null;invalidateMediaCaches();scheduleSave('删除角色',`character-remove:${result.characterId}`);renderAll();$('#importStatus').textContent=`已删除角色“${result.name}”，素材文件保留。可用顶部“撤销”恢复。`}
+    });
   if(!project.characters.length){host.insertAdjacentHTML('beforeend','<div class="muted">还没有角色。导入 Log 会自动创建，或点击上面的“+ 角色”。</div>');return}
   const visibleCharacters=uiPrefs.characterUsedOnly&&usedCharacterIds.size?project.characters.filter(character=>usedCharacterIds.has(character.id)):project.characters;
   if(!project.characters.some(c=>c.id===selectedCharacterId)||!visibleCharacters.some(c=>c.id===selectedCharacterId))selectedCharacterId=visibleCharacters[0]?.id||project.characters[0].id;
   const picker=document.createElement('div');picker.className='character-picker';
-  for(const character of project.characters){const b=document.createElement('button');b.type='button';b.className='character-chip small'+(character.id===selectedCharacterId?' active':'');b.title=character.name;b.dataset.characterName=[character.name,...(character.aliases||[])].join(' ').toLowerCase();b.dataset.characterKind=character.kind||'normal';b.dataset.scriptUsed=usedCharacterIds.has(character.id)?'1':'0';b.innerHTML=`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escapeHtml(character.color)};margin-right:5px"></span>${escapeHtml(character.name)}`;b.onclick=()=>{selectedCharacterId=character.id;renderCharacters()};picker.append(b)}
-  const applyCharacterFilter=()=>{const query=tools.querySelector('[data-character-search]').value.trim().toLowerCase(),kind=tools.querySelector('[data-character-kind]').value,usedOnly=!!tools.querySelector('[data-character-used-only]')?.checked;for(const chip of picker.children)chip.hidden=!!((query&&!chip.dataset.characterName.includes(query))||(kind&&chip.dataset.characterKind!==kind)||(usedOnly&&chip.dataset.scriptUsed!=='1'))};tools.querySelector('[data-character-search]').oninput=applyCharacterFilter;tools.querySelector('[data-character-kind]').onchange=applyCharacterFilter;const usedOnlyToggle=tools.querySelector('[data-character-used-only]');if(usedOnlyToggle)usedOnlyToggle.onchange=e=>{uiPrefs.characterUsedOnly=e.target.checked;saveUiPrefs();if(e.target.checked&&usedCharacterIds.size&&!usedCharacterIds.has(selectedCharacterId))selectedCharacterId=project.characters.find(character=>usedCharacterIds.has(character.id))?.id||selectedCharacterId;renderCharacters()};applyCharacterFilter();
-  host.append(picker);
+  picker.setAttribute('aria-label','角色列表');
+  for(const character of project.characters){const b=document.createElement('button');b.type='button';b.className='character-chip small'+(character.id===selectedCharacterId?' active':'');b.title=character.name;b.setAttribute('aria-pressed',String(character.id===selectedCharacterId));b.dataset.characterId=character.id;b.dataset.characterName=[character.name,...(character.aliases||[])].join(' ').toLowerCase();b.dataset.characterKind=character.kind||'normal';b.dataset.scriptUsed=usedCharacterIds.has(character.id)?'1':'0';b.innerHTML=`<span class="character-chip-dot" style="background:${escapeHtml(character.color)}" aria-hidden="true"></span><span class="character-chip-name">${escapeHtml(character.name)}</span>`;b.onclick=()=>{characterBrowser.scrollTop=picker.scrollTop;selectedCharacterId=character.id;renderCharacters()};picker.append(b)}
+  const filterCount=document.createElement('div');filterCount.className='muted';filterCount.dataset.characterFilterCount='';filterCount.setAttribute('role','status');
+  tools.querySelector('[data-character-search]').value=characterBrowser.query;tools.querySelector('[data-character-kind]').value=characterBrowser.kind;
+  const applyCharacterFilter=()=>{characterBrowser.query=tools.querySelector('[data-character-search]').value;characterBrowser.kind=tools.querySelector('[data-character-kind]').value;const query=characterBrowser.query.trim().toLowerCase(),kind=characterBrowser.kind,usedOnly=!!tools.querySelector('[data-character-used-only]')?.checked;let count=0;for(const chip of picker.children){chip.hidden=!!((query&&!chip.dataset.characterName.includes(query))||(kind&&chip.dataset.characterKind!==kind)||(usedOnly&&chip.dataset.scriptUsed!=='1'));if(!chip.hidden)count++}filterCount.textContent=count?`显示 ${count} / ${project.characters.length} 个角色 · 长名字可换行，更多角色向下滚动`:'没有匹配角色，试试清空搜索或更改筛选。'};tools.querySelector('[data-character-search]').oninput=()=>{characterBrowser.scrollTop=0;picker.scrollTop=0;applyCharacterFilter()};tools.querySelector('[data-character-kind]').onchange=applyCharacterFilter;const usedOnlyToggle=tools.querySelector('[data-character-used-only]');if(usedOnlyToggle)usedOnlyToggle.onchange=e=>{uiPrefs.characterUsedOnly=e.target.checked;saveUiPrefs();if(e.target.checked&&usedCharacterIds.size&&!usedCharacterIds.has(selectedCharacterId))selectedCharacterId=project.characters.find(character=>usedCharacterIds.has(character.id))?.id||selectedCharacterId;renderCharacters()};applyCharacterFilter();
+  host.append(filterCount,picker);picker.scrollTop=characterBrowser.scrollTop;picker.onscroll=()=>{characterBrowser.scrollTop=picker.scrollTop};
+  const cleanup=document.createElement('div');cleanup.className='card stack character-cleanup';host.append(cleanup);identityController.mountActions(cleanup,selectedCharacterId);identityController.mount(host);
   const character=project.characters.find(c=>c.id===selectedCharacterId);if(!character)return;
   character.images??={};character.expressions??={};character.layers??={};character.layerExpressions??={};character.stageFacing??={policy:'flippable',nativeFacing:'left'};character.stageFacing.policy=character.stageFacing.policy==='paired'?'paired':'flippable';character.stageFacing.nativeFacing=['left','right'].includes(character.stageFacing.nativeFacing)?character.stageFacing.nativeFacing:'left';character.stageFacing.variants??={};character.puppet=normalizePuppetRig(character.puppet);character.faceFit=normalizeFaceFit(character.faceFit??defaultFaceFit());
   const activeFaceTemplate=project.faceTemplates.find(t=>t.id===character.faceFit.templateId)||null;
@@ -610,7 +644,7 @@ function renderCharacters(){
     <div class="grid2"><label class="muted">角色名<input data-name value="${escapeHtml(character.name)}"></label><label class="muted">类型<select data-kind>${['normal','npc','kp','system'].map(v=>`<option value="${v}" ${character.kind===v?'selected':''}>${characterKindLabel(v)}</option>`).join('')}</select></label></div>
     ${characterSetupCallout(character,activeFaceTemplate)}
     <details><summary>身份 / 导入别名 <span class="summary-meta">${(character.aliases||[]).length?`${character.aliases.length} 个`:'可选'}</span></summary><div class="disclosure-body"><label class="muted">别名 / 导入名<input data-aliases value="${escapeHtml((character.aliases||[]).join(', '))}" placeholder="例如 Matthew, 马修"></label><div class="muted">只用于识别同一角色的不同导入名；不会改显示名称，也不会自动翻译角色名。</div></div></details>
-    <details><summary>声音 / AI 朗读（可选） <span class="summary-meta" data-character-speech-summary></span></summary><div class="stack disclosure-body"><div class="grid2"><label class="muted">默认朗读语言<input data-character-language list="studioLanguageOptions" value="${escapeHtml(character.speech?.defaultLanguage||'')}" placeholder="留空 = Log 语言"></label><label class="muted">停顿强度 <span data-character-pause-value class="summary-meta"></span><input data-character-pause type="range" min="0" max="3" step="0.1" value="${Number(character.speech?.pauseScale??project.settings.speechPauseScale??1).toFixed(1)}"></label></div><div class="grid2"><label class="muted">口音 / 地区<input data-character-accent value="" placeholder="例如 London / Cockney / Texas / 伦敦"></label><label class="muted">口音强度<select data-character-accent-strength><option value="off">关闭</option><option value="light">轻微</option><option value="natural">自然</option><option value="strong">明显</option></select></label></div><div data-character-accent-results class="stack"></div><div data-character-accent-current class="compact-note"></div><div class="row"><button type="button" data-character-pause-reset class="small">停顿继承全局</button><button type="button" data-character-open-voice class="small">打开声音工作台 / 选 Voice</button></div><div class="muted">常用设置直接放在角色页；完整 Voice 试听、批量生成和高级口音规则在声音工作台。</div></div></details>
+    <details><summary>声音 / AI 朗读（可选） <span class="summary-meta" data-character-speech-summary></span></summary><div class="stack disclosure-body"><div class="grid2"><label class="muted">默认朗读语言<input data-character-language list="studioLanguageOptions" value="${escapeHtml(character.speech?.defaultLanguage||'')}" placeholder="留空 = 工程朗读语言"></label><label class="muted">停顿强度 <span data-character-pause-value class="summary-meta"></span><input data-character-pause type="range" min="0" max="3" step="0.1" value="${Number(character.speech?.pauseScale??project.settings.speechPauseScale??1).toFixed(1)}"></label></div><div class="grid2"><label class="muted">口音 / 地区<input data-character-accent value="" placeholder="例如 London / Cockney / Texas / 伦敦"></label><label class="muted">口音强度<select data-character-accent-strength><option value="off">关闭</option><option value="light">轻微</option><option value="natural">自然</option><option value="strong">明显</option></select></label></div><div data-character-accent-results class="stack"></div><div data-character-accent-current class="compact-note"></div><div class="row"><button type="button" data-character-pause-reset class="small">停顿继承全局</button><button type="button" data-character-open-voice class="small">打开声音工作台 / 选 Voice</button></div><div class="muted">常用设置直接放在角色页；完整 Voice 试听、批量生成和高级口音规则在声音工作台。</div></div></details>
     <div class="grid2"><label class="muted">允许自动上镜 <input data-show type="checkbox" ${character.showOnStage?'checked':''}></label><label class="muted">默认站位<select data-pos>${['auto','left','center','right'].map(v=>`<option value="${v}" ${character.defaultPosition===v?'selected':''}>${positionLabel(v)}</option>`).join('')}</select></label></div>
     <label class="row"><input type="checkbox" data-asymmetric-facing ${character.stageFacing.policy==='paired'?'checked':''}><span><strong>这个角色左右不对称</strong><small class="muted" style="display:block">通常不用勾。普通立绘默认可左右镜像；只有伤疤、徽章、眼罩、单侧配件等需要保留方向时，才分别提供左右两版。</small></span></label><div class="muted">未勾选时，舞台上的 ⇆ 只做人工镜像；自动构图不会擅自改变朝向。勾选后改为 L/R 独立素材，系统切换素材而不镜像像素。</div>
     ${character.stageFacing.policy==='paired'?`<div class="card stack paired-facing-assets"><div class="row"><strong>左右独立立绘</strong><span class="muted">未绑定的部分自动继承通用素材</span></div><div class="grid2"><label class="muted">朝画面左 · 角色底图<select data-paired-layer="left:base">${imageAssetOptions(character.stageFacing.variants?.left?.layers?.base)}</select></label><label class="muted">朝画面右 · 角色底图<select data-paired-layer="right:base">${imageAssetOptions(character.stageFacing.variants?.right?.layers?.base)}</select></label></div><details class="advanced-only"><summary>旧式整帧立绘左右版本</summary><div class="grid2 disclosure-body"><label class="muted">朝左 · IDLE<select data-paired-image="left:idle">${imageAssetOptions(character.stageFacing.variants?.left?.images?.idle)}</select></label><label class="muted">朝右 · IDLE<select data-paired-image="right:idle">${imageAssetOptions(character.stageFacing.variants?.right?.images?.idle)}</select></label></div></details><div class="muted">在“可视化摆放”里点 L/R 决定这一时刻使用哪一套；后续行会继承这个方向，系统不会自行交换。</div></div>`:''}
@@ -626,7 +660,7 @@ function renderCharacters(){
   card.querySelector('[data-name]').onchange=e=>{const next=e.target.value.trim();if(!next||project.characters.some(c=>c.id!==character.id&&c.name===next)){e.target.value=character.name;return}const old=character.name;character.name=next;for(const line of project.lines)if(line.speakerId===character.id&&line.sourceSpeaker===old)line.sourceSpeaker=next;scheduleSave('重命名角色',`character-name:${character.id}`);renderAll()};
   card.querySelector('[data-aliases]').onchange=e=>{const seen=new Set(),aliases=[];for(const raw of e.target.value.split(/[,，;；\n]+/)){const value=raw.trim(),key=normalizeCharacterNameKey(value);if(!value||!key||key===normalizeCharacterNameKey(character.name)||seen.has(key))continue;seen.add(key);aliases.push(value)}character.aliases=aliases;scheduleSave('修改角色导入别名',`character-aliases:${character.id}`);renderAll()};
   character.speech??={defaultLanguage:null,voices:{},accents:{}};character.speech.voices??={};character.speech.accents??={};
-  new CharacterSpeechController({project,escapeHtml,searchAccents,getAccentProfile,normalizeNameKey:normalizeCharacterNameKey,scheduleSave,setStatus:message=>{$('#importStatus').textContent=message},hasWorkspace:()=>!!workspace}).mount(card,character);
+  new CharacterSpeechController({project,escapeHtml,searchAccents,getAccentProfile,normalizeNameKey:normalizeCharacterNameKey,scheduleSave,openVoice:openVoiceWorkbench,setStatus:message=>{$('#importStatus').textContent=message},hasWorkspace:()=>!!workspace}).mount(card,character);
   card.querySelector('[data-kind]').onchange=e=>{character.kind=e.target.value;scheduleSave('修改角色类型',`character-kind:${character.id}`);renderAll()};
   card.querySelector('[data-show]').onchange=e=>{character.showOnStage=e.target.checked;scheduleSave();renderAll()};
   card.querySelector('[data-pos]').onchange=e=>{character.defaultPosition=e.target.value;scheduleSave();renderAll()};
@@ -928,7 +962,7 @@ function renderInspector(){
   const chapter=outlineEntry?.chapter||'未分章',scene=outlineEntry?.scene||'默认 Scene';$('#contextPath').textContent=`# ${chapter}  /  § ${scene}`;$('#structureSummary').textContent=`${chapter} / ${scene}`;
   const effect=line.textEffect&&line.textEffect!=='all'?({w2w:'逐字',l2l:'逐行',run:'滚动'}[line.textEffect]||line.textEffect):'整句';const duration=line.duration==null?'自动时长':`${line.duration}s`;$('#displaySummary').textContent=isCommand?(line.command?.kind==='wait'?`等待 ${line.command.duration||0}s`:'即时事件'):`${duration} · ${effect}`;
   const assetLabel=id=>project.assets.find(a=>a.id===id)?.name||'';const sceneBits=[];const bg=line.scene&&has(line.scene,'background')?line.scene.background:null;if(bg)sceneBits.push(`背景 ${assetLabel(bg)||'已设置'}`);if(line.scene?.camera&&line.scene.camera!=='none')sceneBits.push(`镜头 ${line.scene.camera}`);if(line.cameraTransform!==undefined||currentPerf()?.cameraPlacementSource==='inherited')sceneBits.push(line.cameraTransform===null?'镜头全景':'镜头已取景');if(line.scene?.transition&&line.scene.transition!=='cut')sceneBits.push('淡入淡出');if(line.scene&&has(line.scene,'bgm')&&line.scene.bgm)sceneBits.push(`BGM ${assetLabel(line.scene.bgm)||'已设置'}`);if(line.scene&&has(line.scene,'ambient')&&line.scene.ambient)sceneBits.push(`环境声 ${assetLabel(line.scene.ambient)||'已设置'}`);$('#sceneSummary').textContent=sceneBits.join(' · ')||'继承 / 默认';
-  const roster=currentPerf()?.stage?.map(a=>a.characterId)||[];$('#stageSummary').textContent=line.stageMode==='custom'?`手动 · ${roster.length} 人`:`自动 · ${roster.length} 人`;$('#customStageWrap').hidden=(line.stageMode||'auto')!=='custom';
+  const roster=currentPerf()?.stage?.map(a=>a.characterId)||[];$('#stageSummary').textContent=line.stageMode==='custom'?`手动 · ${roster.length} 人`:`自动 · ${roster.length} 人`;$('#customStageWrap').hidden=(line.stageMode||'auto')!=='custom';sceneViewport?.render();renderStageQuickControls();
 }
 
 
@@ -959,7 +993,28 @@ function setWorkbenchTab(tab){
   document.querySelectorAll('[data-workbench-pane]').forEach(pane=>pane.hidden=pane.dataset.workbenchPane!==tab);
   if(tab==='audio')audioWorkbench?.render();if(tab==='voice')renderVoiceLineWorkbench();
 }
-function setWorkbenchSize(size){if(!['collapsed','standard','expanded'].includes(size))size='standard';uiPrefs.workbenchSize=size;$('#workbench').dataset.size=size;saveUiPrefs()}
+function setWorkbenchSize(size){
+  if(!['collapsed','standard','expanded','custom'].includes(size))size='standard';
+  uiPrefs.workbenchSize=size;const bench=$('#workbench');bench.dataset.size=size;
+  bench.style.removeProperty('flex');bench.style.removeProperty('min-height');
+  if(size==='custom'){const height=clampNumber(uiPrefs.workbenchHeight||400,180,Math.max(300,window.innerHeight*.72));bench.style.flex=`0 0 ${height}px`;bench.style.minHeight=`${height}px`}
+  document.querySelectorAll('[data-workbench-size]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.workbenchSize===size)));saveUiPrefs();
+}
+function renderStageQuickControls(){
+  const line=currentLine(),perf=currentPerf();$('#stageQuickControls').hidden=!line||line.type==='command';
+  const names=(perf?.stage||[]).map(actor=>project.characters.find(c=>c.id===actor.characterId)?.name).filter(Boolean);
+  $('#stageQuickRoster').textContent=names.length?`当前 ${names.length} 人：${names.join('、')}`:'当前无人上镜';
+}
+function setupWorkbenchResize(){
+  const grip=$('#workbenchResize');
+  grip.onpointerdown=event=>{if(event.button!==0)return;event.preventDefault();const startY=event.clientY,startHeight=$('#workbench').getBoundingClientRect().height;grip.setPointerCapture?.(event.pointerId);
+    const move=e=>{uiPrefs.workbenchHeight=clampNumber(startHeight+startY-e.clientY,180,Math.max(300,window.innerHeight*.72));setWorkbenchSize('custom')};
+    const finish=()=>{grip.removeEventListener('pointermove',move);grip.removeEventListener('pointerup',finish);grip.removeEventListener('pointercancel',finish)};
+    grip.addEventListener('pointermove',move);grip.addEventListener('pointerup',finish);grip.addEventListener('pointercancel',finish);
+  };
+  grip.onkeydown=event=>{if(!['ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();uiPrefs.workbenchHeight=$('#workbench').getBoundingClientRect().height+(event.key==='ArrowUp'?40:-40);setWorkbenchSize('custom')};
+}
+
 function setContextTab(tab){
   if(!['properties','check','publish'].includes(tab))tab='properties';uiPrefs.contextTab=tab;saveUiPrefs();
   document.querySelectorAll('[data-context-tab]').forEach(button=>button.classList.toggle('active',button.dataset.contextTab===tab));
@@ -968,7 +1023,11 @@ function setContextTab(tab){
 }
 function setupWorkbenchLayout(){
   const performancePane=$('#workbenchPerformance'),stage=$('#stageReady');
+  $('#stageQuickCount').append($('#maxOnStageEdit').closest('label'));$('#stageQuickMode').append($('#stageModeEdit').closest('label'));
+  $('#stageQuickChoose').onclick=()=>{if($('#stageModeEdit').value!=='custom'){$('#stageModeEdit').value='custom';$('#stageModeEdit').dispatchEvent(new Event('change'))}$('#stageDetails').open=true;setWorkbenchTab('performance');if(uiPrefs.workbenchSize==='collapsed')setWorkbenchSize('expanded');$('#stageDetails').scrollIntoView({block:'nearest',behavior:'smooth'})};
+  setupWorkbenchResize();
   for(const selector of ['.stage-edit-bar','.playback',':scope > .row','.playtest-entry']){const element=stage?.querySelector(selector);if(element)performancePane.append(element)}
+  performancePane.append($('#stageDetails'));
   const rightBody=document.querySelector('.panel.right>.body'),inspector=$('#inspectorCard');if(rightBody&&inspector){inspector.classList.add('context-inspector-host');inspector.dataset.contextPane='properties';rightBody.prepend(inspector)}
   document.querySelectorAll('[data-context-tab]').forEach(button=>button.addEventListener('click',()=>setContextTab(button.dataset.contextTab)));setContextTab(uiPrefs.contextTab||'properties');
   document.querySelectorAll('[data-workbench-tab]').forEach(button=>button.addEventListener('click',()=>setWorkbenchTab(button.dataset.workbenchTab)));
@@ -1013,7 +1072,7 @@ function setContentView(view,{persist=true,render=true}={}){
   syncCenterContext();
   if(render)renderCurrentView();
 }
-function renderAll(){if(!project)return;selectedIndex=Math.max(0,Math.min(selectedIndex,Math.max(0,project.lines.length-1)));refreshSearch();compile();updateToolbarOptions();renderCurrentView();renderInspector();stageDirectEditor?.render();cameraDirectEditor?.render();renderVoiceLineWorkbench();audioWorkbench?.render();updateSelectionUi();updateHistoryUi();void renderPreviewStatic()}
+function renderAll(){if(!project)return;selectedIndex=Math.max(0,Math.min(selectedIndex,Math.max(0,project.lines.length-1)));refreshSearch();compile();updateToolbarOptions();renderCurrentView();renderInspector();stageDirectEditor?.render();cameraDirectEditor?.render();sceneViewport?.render();renderStageQuickControls();renderVoiceLineWorkbench();audioWorkbench?.render();updateSelectionUi();updateHistoryUi();void renderPreviewStatic();document.dispatchEvent(new CustomEvent('replaylab:project-state',{detail:{title:project.title,hasContent:!!workspace||project.lines.length>0,connected:!!workspace}}))}
 
 function bindEdit(id,fn,event='change',fullRender=true){$('#'+id).addEventListener(event,()=>{const line=currentLine();if(!line)return;fn(line,$('#'+id).value);scheduleSave('编辑台词',`${line.id}:${id}`);if(fullRender)renderAll()})}
 bindEdit('speakerEdit',(l,v)=>l.speakerId=v);bindEdit('typeEdit',(l,v)=>{l.type=v;if(v==='command'){l.text=l.text.startsWith('/')?l.text:'/wait 0';l.mouth='off';syncCommandLine(l)}else l.command=null;if(v==='dice')l.diceRolls??=[];if(v==='hitpoint')ensureHitPoint(l);if(v==='wheel'){l.wheel??={title:'转盘',mode:'history',steps:[{title:'转盘',options:[{id:'a',label:'A',weight:1},{id:'b',label:'B',weight:1}],resultId:'a',resultLabel:'A'}],blockingAuto:false};l.mouth='off';l.duration??=2.8}if(v==='bubble'){ensureBubble(l);l.mouth='off'}});bindEdit('durationEdit',(l,v)=>l.duration=v===''?null:Number(v));bindEdit('textEdit',(l,v)=>{l.text=v;if(l.type==='command')syncCommandLine(l);if(l.type==='bubble')ensureBubble(l).mainText=v},'input',false);$('#textEdit').addEventListener('change',()=>renderAll());bindEdit('expressionEdit',(l,v)=>{if(v==='__inherit__'){l.expressionMode='inherit';return}l.expressionMode='set';l.expression=v});bindEdit('mouthEdit',(l,v)=>l.mouth=v);bindEdit('sfxEdit',(l,v)=>l.sfxAssetId=v||null);bindEdit('textEffectEdit',(l,v)=>l.textEffect=v);bindEdit('textEffectDurationEdit',(l,v)=>l.textEffectDuration=v===''?null:Number(v));
@@ -1057,7 +1116,7 @@ $('#outputFilterPreset').addEventListener('change',()=>updateSceneGraphPatch(p=>
 $('#layerFilterTarget').addEventListener('change',()=>renderSceneEffectsControls(currentLine()));$('#layerFilterPreset').addEventListener('change',()=>updateSceneGraphPatch(p=>{p.layerEffects??={};p.layerEffects[$('#layerFilterTarget').value]=sceneFilterStack($('#layerFilterPreset').value)},'修改图层滤镜','scene-layer-filter'));
 function writeCgMask(){const kind=$('#cgMaskKind').value;if(kind==='none'){updateCgPresentation(p=>p.mask=null,'移除 CG 遮罩');return}updateCgPresentation(p=>{const size=Number($('#cgMaskSize').value)||.42;p.mask={kind,assetId:kind==='asset'?($('#cgMaskAsset').value||null):null,inverted:$('#cgMaskInvert').checked,x:Number($('#cgMaskX').value)||.5,y:Number($('#cgMaskY').value)||.5,radius:size,width:size,height:Math.min(1.5,size),feather:Number($('#cgMaskFeather').value)||0,animation:$('#cgMaskAnimation').value,duration:Number(p.duration)||.6}},'修改 CG 遮罩')}
 for(const id of ['cgMaskKind','cgMaskAsset','cgMaskAnimation','cgMaskInvert'])$('#'+id).addEventListener('change',writeCgMask);for(const id of ['cgMaskX','cgMaskY','cgMaskSize','cgMaskFeather'])$('#'+id).addEventListener('input',writeCgMask);
-bindEdit('cameraEdit',(l,v)=>{l.scene??={};l.scene.camera=v});bindEdit('transitionEdit',(l,v)=>{l.scene??={};l.scene.transition=v});bindEdit('cameraCurveEdit',(l,v)=>{l.scene??={};l.scene.cameraCurve=v});bindEdit('transitionCurveEdit',(l,v)=>{l.scene??={};l.scene.transitionCurve=v});bindEdit('backgroundMethodEdit',(l,v)=>{l.scene??={};l.scene.backgroundMethod=v});bindEdit('backgroundMethodDurationEdit',(l,v)=>{l.scene??={};l.scene.backgroundMethodDuration=v===''?null:Number(v)});bindEdit('stageModeEdit',(l,v)=>l.stageMode=v);
+bindEdit('cameraEdit',(l,v)=>{l.scene??={};l.scene.camera=v});bindEdit('transitionEdit',(l,v)=>{l.scene??={};l.scene.transition=v});bindEdit('cameraCurveEdit',(l,v)=>{l.scene??={};l.scene.cameraCurve=v});bindEdit('transitionCurveEdit',(l,v)=>{l.scene??={};l.scene.transitionCurve=v});bindEdit('backgroundMethodEdit',(l,v)=>{l.scene??={};l.scene.backgroundMethod=v});bindEdit('backgroundMethodDurationEdit',(l,v)=>{l.scene??={};l.scene.backgroundMethodDuration=v===''?null:Number(v)});bindEdit('stageModeEdit',(l,v)=>{if(v==='custom'&&!(l.stageIds?.length)){const stage=currentPerf()?.stage||[];l.stageIds=stage.map(actor=>actor.characterId);l.stagePositions=Object.fromEntries(stage.map(actor=>[actor.characterId,actor.position]))}l.stageMode=v});
 $('#autoStageModeEdit').addEventListener('change',()=>{if(!project)return;project.settings.autoStageMode=$('#autoStageModeEdit').value;scheduleSave('修改自动立绘调度','auto-stage-mode');renderAll()});
 $('#maxOnStageEdit').addEventListener('change',()=>{if(!project)return;project.settings.maxOnStage=Math.max(1,Math.min(3,Number($('#maxOnStageEdit').value)||2));scheduleSave('修改自动同屏人数','auto-stage-count');renderAll()});
 $('#speakerFocusEdit').addEventListener('change',()=>{if(!project)return;const value=$('#speakerFocusEdit').value;project.settings.speakerFocus=value;project.settings.dimOthers=value!=='none';scheduleSave('修改说话人焦点','speaker-focus');renderAll()});
@@ -1128,6 +1187,8 @@ $('#searchPrev').onclick=()=>goSearch(-1);$('#searchNext').onclick=()=>goSearch(
 $('#selectSearch').onclick=()=>{for(const hit of searchHits)selectedLineIds.add(project.lines[hit.index].id);updateSelectionUi();renderScript()};
 function selectOutlineGroup(kind){if(!project?.lines.length)return;const outline=buildScriptOutline(project.lines),current=outline[selectedIndex];if(!current)return;const key=kind==='chapter'?current.chapterKey:current.sceneKey;for(const entry of outline)if((kind==='chapter'?entry.chapterKey:entry.sceneKey)===key)selectedLineIds.add(project.lines[entry.index].id);updateSelectionUi();renderScript()}
 $('#selectScene').onclick=()=>selectOutlineGroup('scene');$('#selectChapter').onclick=()=>selectOutlineGroup('chapter');$('#clearSelection').onclick=()=>{selectedLineIds.clear();lastSelectionIndex=null;updateSelectionUi();renderScript()};
+$('#projectSpeechLanguage')?.addEventListener('change',()=>{if(!project)return;project.settings.speechLanguage=$('#projectSpeechLanguage').value.trim()||'auto';scheduleSave('修改工程朗读语言','project-speech-language');renderAll();});
+$('#projectTtsProvider').addEventListener('change',()=>{if(!project)return;project.settings.ttsProvider=$('#projectTtsProvider').value;scheduleSave('修改默认声音服务','project-tts-provider');renderAll();});
 $('#globalPauseScale').oninput=()=>{if(!project)return;project.settings.speechPauseScale=Number($('#globalPauseScale').value);$('#globalPauseScaleValue').textContent=`${Number(project.settings.speechPauseScale).toFixed(1)}×`;scheduleSave('修改全剧朗读停顿','global-speech-pause');if(activeView==='characters')renderCharacters();if(currentLine())renderInspector()};
 $('#applyGlobalTextEffect').onclick=()=>{if(!project?.lines.length)return;const effect=$('#globalTextEffect').value;const ids=project.lines.filter(line=>String(line.text||'').trim()).map(line=>line.id);applyBatchEdit(project,ids,{textEffect:effect});scheduleSave('设置全剧文字出现','global-text-effect');renderAll();$('#importStatus').textContent=`已把 ${ids.length} 行文字设置为“${$('#globalTextEffect').selectedOptions[0]?.textContent||effect}”。`};
 $('#batchPunctuationMode').onchange=()=>{const mode=$('#batchPunctuationMode').value;$('#batchPunctuationUniform').hidden=mode!=='uniform';$('#batchPunctuationCustom').hidden=mode!=='custom'};
@@ -1253,15 +1314,16 @@ $('#playtestCanvas').addEventListener('pointerup',event=>{if(!playtestObjectInte
 $('#playtestCanvas').addEventListener('wheel',event=>{if(!playtestObjectInteraction||!playtestRenderer)return;const point=playtestCanvasPoint(event),hit=playtestRenderer.customObjectHitTest(point.x,point.y);if(!hit)return;const object=performanceDoc.customObjects?.find(item=>item.id===hit.objectId);if(object?.interactionMode!=='pan-zoom')return;event.preventDefault();playtestObjectInteraction.zoomBy(hit.objectId,event.deltaY<0?1.08:.92);void refreshPlaytestInteractiveFrame()},{passive:false});
 $('#playtestRecordObject').onclick=()=>{if(!playtestObjectInteraction)return;if(playtestObjectInteraction.isRecording){const take=playtestObjectInteraction.stopRecording();if(take){project.customObjectTakes??=[];project.customObjectTakes.push(take);scheduleSave('保存对象交互录制','object-take-record');$('#playtestObjectRecordState').textContent=`已保存 ${take.steps.length} 步 · 到素材页可烘焙`;renderAssets()}$('#playtestRecordObject').classList.remove('active');$('#playtestRecordObject').textContent='录制对象交互';return}playtestRecordingPending=!playtestRecordingPending;$('#playtestRecordObject').classList.toggle('active',playtestRecordingPending);$('#playtestRecordObject').textContent=playtestRecordingPending?'点击对象开始录制':'录制对象交互';$('#playtestObjectRecordState').textContent=playtestRecordingPending?'下一次点击的对象将成为录制目标':''};
 
-$('#playtestHere').onclick=()=>{stageDirectEditor?.exit();cameraDirectEditor?.exit();void openPlaytest(selectedIndex)};
-$('#playtestScene').onclick=()=>{stageDirectEditor?.exit();cameraDirectEditor?.exit();void openPlaytest(sceneStartIndex(selectedIndex))};
-$('#playtestStart').onclick=()=>{stageDirectEditor?.exit();cameraDirectEditor?.exit();void openPlaytest(0)};
+$('#playtestHere').onclick=()=>{stageDirectEditor?.exit();cameraDirectEditor?.exit();sceneViewport?.exit();void openPlaytest(selectedIndex)};
+$('#playtestScene').onclick=()=>{stageDirectEditor?.exit();cameraDirectEditor?.exit();sceneViewport?.exit();void openPlaytest(sceneStartIndex(selectedIndex))};
+$('#playtestStart').onclick=()=>{stageDirectEditor?.exit();cameraDirectEditor?.exit();sceneViewport?.exit();void openPlaytest(0)};
 $('#playtestNext').onclick=()=>void playtestRuntime?.next();$('#playtestPrev').onclick=()=>void playtestRuntime?.previous();
 $('#playtestAuto').onclick=()=>playtestRuntime?.toggleAuto();$('#playtestSkip').onclick=()=>playtestRuntime?.toggleSkip();
 $('#playtestRestart').onclick=()=>void playtestRuntime?.restart(playtestOriginIndex);
 $('#playtestBacklog').onclick=()=>{const log=$('#playtestLog');log.hidden=!log.hidden;if(!log.hidden)renderPlaytestLog()};
 $('#playtestClose').onclick=closePlaytest;$('#exportPlayable').onclick=()=>void exportPlayableDirectory();
-$('#openVoiceWorkbench').onclick=()=>{if(!workspace)$('#importStatus').textContent='AI 朗读：当前是临时工程；角色页可直接改语言/口音。需要批量生成语音时，建议先连接工程目录再打开声音工作台。';window.open('./index.html','replaylab-voice')};
+$('#openVoiceWorkbench').onclick=openVoiceWorkbench;
+for(const link of document.querySelectorAll('a[href="./index.html"]'))link.onclick=event=>{event.preventDefault();openVoiceWorkbench();};
 
 document.querySelectorAll('[data-export]').forEach(button=>button.onclick=async()=>{
   if(!project)return;const type=button.dataset.export;
@@ -1273,13 +1335,13 @@ document.querySelectorAll('[data-export]').forEach(button=>button.onclick=async(
   if(workspace)await refreshWorkspace();
 });
 
-$('#playLine').onclick=async()=>{if(!player||!currentPerf())return;stageDirectEditor?.exit();cameraDirectEditor?.exit();setPlaybackButtons(true);try{await player.playLine(selectedIndex)}catch(error){setPlaybackButtons(false);$('#renderStatus').textContent=`播放失败：${error.message||error}`}};
-$('#playAll').onclick=async()=>{if(!player||!performanceDoc?.lines.length)return;stageDirectEditor?.exit();cameraDirectEditor?.exit();const current=currentPerf();if(!Number.isFinite(playbackCursorTime)||playbackCursorTime<0||playbackCursorTime>=performanceDoc.duration)playbackCursorTime=current?.start??0;setPlaybackButtons(true);try{await player.playAll(playbackCursorTime)}catch(error){setPlaybackButtons(false);$('#renderStatus').textContent=`播放失败：${error.message||error}`}};
+$('#playLine').onclick=async()=>{if(!player||!currentPerf())return;stageDirectEditor?.exit();cameraDirectEditor?.exit();sceneViewport?.exit();setPlaybackButtons(true);try{await player.playLine(selectedIndex)}catch(error){setPlaybackButtons(false);$('#renderStatus').textContent=`播放失败：${error.message||error}`}};
+$('#playAll').onclick=async()=>{if(!player||!performanceDoc?.lines.length)return;stageDirectEditor?.exit();cameraDirectEditor?.exit();sceneViewport?.exit();const current=currentPerf();if(!Number.isFinite(playbackCursorTime)||playbackCursorTime<0||playbackCursorTime>=performanceDoc.duration)playbackCursorTime=current?.start??0;setPlaybackButtons(true);try{await player.playAll(playbackCursorTime)}catch(error){setPlaybackButtons(false);$('#renderStatus').textContent=`播放失败：${error.message||error}`}};
 $('#stopPlay').onclick=()=>{player?.stop();void renderPreviewStatic()};
 $('#seek').oninput=async event=>{if(!performanceDoc||!renderer)return;player?.stop();const time=performanceDoc.duration*Number(event.target.value)/1000;playbackCursorTime=time;const located=locatePerformanceLine(performanceDoc,time);if(located){selectedIndex=located.index;await renderer.renderLine(located.index,located.localTime);$('#timeLabel').textContent=`${time.toFixed(1)} / ${performanceDoc.duration.toFixed(1)}s`;renderScript();renderInspector();renderVoiceLineWorkbench();audioWorkbench?.render();renderState()}};
 
-async function acquireFastExportTarget(name){
-  if(workspace?.createWritable){return {writable:await workspace.createWritable(`exports/${name}`),location:`${workspace.label}/exports/${name}`}}
+async function acquireFastExportTarget(name,directory=workspace){
+  if(directory?.createWritable){return {writable:await directory.createWritable(`exports/${name}`),location:`${directory.label}/exports/${name}`}}
   const picker=globalThis.showSaveFilePicker;
   if(picker){
     try{
@@ -1290,34 +1352,39 @@ async function acquireFastExportTarget(name){
   return {writable:null,location:'浏览器内存'};
 }
 let activeExportController=null;
+let exportBusy=false;
+function captureExport(){return createExportSession({project,performance:performanceDoc,workspace,files:runtimeFiles,width:$('#stageCanvas').width,height:$('#stageCanvas').height});}
 $('#exportQuality').onchange=updateExportEstimate;
 $('#cancelExport').onclick=()=>activeExportController?.abort();
 $('#exportMp4').onclick=async()=>{
-  if(!player||!performanceDoc?.lines.length)return;
+  if(exportBusy||!player||!performanceDoc?.lines.length)return;
+  const session=captureExport();exportBusy=true;let target,exportCompleted=false;
   const preset=selectedExportPreset(),safe=(project.title||'replay').replace(/[^\w\u3400-\u9fff-]+/g,'_'),name=`${safe}.mp4`;
   $('#exportMp4').disabled=true;$('#exportWebm').disabled=true;$('#cancelExport').hidden=false;activeExportController=new AbortController();$('#renderStatus').textContent='准备离线编码器…';$('#renderProgress').style.width='0%';
   try{
-    const target=await acquireFastExportTarget(name);if(!target){$('#renderStatus').textContent='已取消导出。';return}
-    const estimate=performanceDoc.duration*(preset.video+preset.audio)/8;
+    target=await acquireFastExportTarget(name,session.workspace);if(!target){$('#renderStatus').textContent='已取消导出。';return}
+    const estimate=session.performance.duration*(preset.video+preset.audio)/8;
     if(!target.writable&&estimate>100*1024*1024&&!confirm(`当前浏览器无法直接流式写文件，预计需要在内存中暂存约 ${formatBytes(estimate)}。继续可能占用较多内存。\n\n建议使用 Chrome/Edge 或先连接工程目录。仍要继续吗？`)){return}
     const phaseLabel={loading:'加载编码器',audio:'混合音频',video:'编码画面',finalizing:'封装 MP4'};
-    const result=await player.exportMp4Fast({fps:30,videoBitsPerSecond:preset.video,audioBitsPerSecond:preset.audio,chunkSeconds:10,moduleSpecifier:MEDIABUNNY_BROWSER_MODULE,writable:target.writable||undefined,signal:activeExportController.signal,onProgress:(progress,phase)=>{$('#renderProgress').style.width=`${(progress*100).toFixed(1)}%`;$('#renderStatus').textContent=`${phaseLabel[phase]} · ${(progress*100).toFixed(1)}%`}});
-    if(result.blob)downloadBlob(name,result.blob);
+    const result=await session.player.exportMp4Fast({fps:30,videoBitsPerSecond:preset.video,audioBitsPerSecond:preset.audio,chunkSeconds:10,moduleSpecifier:MEDIABUNNY_BROWSER_MODULE,writable:target.writable||undefined,signal:activeExportController.signal,onProgress:(progress,phase)=>{$('#renderProgress').style.width=`${(progress*100).toFixed(1)}%`;$('#renderStatus').textContent=`${phaseLabel[phase]} · ${(progress*100).toFixed(1)}%`}});
+    exportCompleted=true;if(result.blob)downloadBlob(name,result.blob);
     if(workspace)await refreshWorkspace();
     $('#renderProgress').style.width='100%';$('#renderStatus').textContent=`完成 · ${formatBytes(result.bytesWritten)} · ${result.streamed?'已直接写入 '+target.location:'已生成 MP4'}`;
   }catch(error){if(error?.name==='AbortError'){$('#renderStatus').textContent='导出已取消。';$('#renderProgress').style.width='0%'}else{console.error(error);const hint=/aac|audio|encoder/i.test(String(error?.message||error))?'；当前浏览器的 AAC/WebCodecs 不可用时，可改用下面的 WebM 兼容导出':'';$('#renderStatus').textContent=`快速 MP4 失败：${error.message||error}${hint}`}}
-  finally{activeExportController=null;$('#cancelExport').hidden=true;$('#exportMp4').disabled=false;$('#exportWebm').disabled=false;setPlaybackButtons(false)}
+  finally{await session.player.dispose();if(!exportCompleted){try{await target?.writable?.abort?.();}catch{}}exportBusy=false;activeExportController=null;$('#cancelExport').hidden=true;$('#exportMp4').disabled=false;$('#exportWebm').disabled=false;}
 };
 
 $('#exportWebm').onclick=async()=>{
-  if(!player||!performanceDoc?.lines.length)return;$('#exportWebm').disabled=true;$('#renderStatus').textContent='准备素材和音轨…';$('#renderProgress').style.width='0%';
-  try{const blob=await player.exportWebM({onProgress:p=>{$('#renderProgress').style.width=`${(p*100).toFixed(1)}%`;$('#renderStatus').textContent=`实时成片 ${(p*100).toFixed(1)}% · ${performanceDoc.duration.toFixed(1)}s`}});const name=`${(project.title||'replay').replace(/[^\w\u3400-\u9fff-]+/g,'_')}.webm`;if(workspace){await workspace.write(`exports/${name}`,blob,'video/webm');await refreshWorkspace()}downloadBlob(name,blob);$('#renderStatus').textContent=`完成 · ${(blob.size/1024/1024).toFixed(1)} MB${workspace?' · 已写入 exports/':''}`}
+  if(exportBusy||!player||!performanceDoc?.lines.length)return;
+  const session=captureExport();exportBusy=true;$('#exportMp4').disabled=true;$('#exportWebm').disabled=true;$('#renderStatus').textContent='准备素材和音轨…';$('#renderProgress').style.width='0%';
+  try{const blob=await session.player.exportWebM({onProgress:p=>{$('#renderProgress').style.width=`${(p*100).toFixed(1)}%`;$('#renderStatus').textContent=`实时成片 ${(p*100).toFixed(1)}% · ${session.performance.duration.toFixed(1)}s`}});const name=`${(session.title||'replay').replace(/[^\w\u3400-\u9fff-]+/g,'_')}.webm`;if(session.workspace){await session.workspace.write(`exports/${name}`,blob,'video/webm');if(workspace===session.workspace)await refreshWorkspace()}downloadBlob(name,blob);$('#renderStatus').textContent=`完成 · ${(blob.size/1024/1024).toFixed(1)} MB${session.workspace?' · 已写入 exports/':''}`}
   catch(error){console.error(error);$('#renderStatus').textContent=`导出失败：${error.message||error}`}
-  finally{$('#exportWebm').disabled=false;setPlaybackButtons(false)}
+  finally{await session.player.dispose();exportBusy=false;$('#exportWebm').disabled=false;$('#exportMp4').disabled=false;}
 };
 
-stageDirectEditor=new StageDirectEditorController({host:$('#stageDirectEditor'),toggle:$('#stageEditToggle'),hint:$('#stageEditHint'),copyButton:$('#stageCopyComposition'),pasteButton:$('#stagePasteComposition'),inheritButton:$('#stageInheritComposition'),resetButton:$('#stageResetAuto'),projectionControl:$('#stageProjectionMode'),onionControls:$('#stageOnionControls'),onionPrev:$('#onionPrev'),onionNext:$('#onionNext'),onionScope:$('#onionScope'),onionOpacity:$('#onionOpacity'),getProject:()=>project,getLine:()=>currentLine(),getPerformanceLine:()=>currentPerf(),getPreviousPerformanceLine:()=>performanceDoc?.lines?.[selectedIndex-1]??null,getNextPerformanceLine:()=>performanceDoc?.lines?.[selectedIndex+1]??null,resolveAsset,onMutation:(label,key)=>{scheduleSave(label,key);renderAll()},onStopPlayback:()=>player?.stop(),onPreviewRefresh:()=>void renderPreviewStatic(),onActivate:()=>cameraDirectEditor?.exit()});
-cameraDirectEditor=new CameraDirectEditorController({host:$('#cameraDirectEditor'),toggle:$('#cameraEditToggle'),hint:$('#cameraEditHint'),inheritButton:$('#cameraInherit'),resetButton:$('#cameraReset'),getLine:()=>currentLine(),getPerformanceLine:()=>currentPerf(),onMutation:(label,key)=>{scheduleSave(label,key);renderAll()},onStopPlayback:()=>player?.stop(),onPreviewRefresh:()=>void renderPreviewStatic(),onActivate:()=>stageDirectEditor?.exit()});
+stageDirectEditor=new StageDirectEditorController({host:$('#stageDirectEditor'),toggle:$('#stageEditToggle'),hint:$('#stageEditHint'),copyButton:$('#stageCopyComposition'),pasteButton:$('#stagePasteComposition'),inheritButton:$('#stageInheritComposition'),resetButton:$('#stageResetAuto'),projectionControl:$('#stageProjectionMode'),onionControls:$('#stageOnionControls'),onionPrev:$('#onionPrev'),onionNext:$('#onionNext'),onionScope:$('#onionScope'),onionOpacity:$('#onionOpacity'),getProject:()=>project,getLine:()=>currentLine(),getPerformanceLine:()=>currentPerf(),getPreviousPerformanceLine:()=>performanceDoc?.lines?.[selectedIndex-1]??null,getNextPerformanceLine:()=>performanceDoc?.lines?.[selectedIndex+1]??null,resolveAsset,onMutation:(label,key)=>{scheduleSave(label,key);renderAll()},onStopPlayback:()=>player?.stop(),onPreviewRefresh:()=>void renderPreviewStatic(),onActivate:()=>{cameraDirectEditor?.exit();sceneViewport?.exit()}});
+cameraDirectEditor=new CameraDirectEditorController({host:$('#cameraDirectEditor'),toggle:$('#cameraEditToggle'),hint:$('#cameraEditHint'),inheritButton:$('#cameraInherit'),resetButton:$('#cameraReset'),getLine:()=>currentLine(),getPerformanceLine:()=>currentPerf(),onMutation:(label,key)=>{scheduleSave(label,key);renderAll()},onStopPlayback:()=>player?.stop(),onPreviewRefresh:()=>void renderPreviewStatic(),onActivate:()=>{stageDirectEditor?.exit();sceneViewport?.showCameraControls()}});
+sceneViewport=new SceneViewportController({root:$('#sceneViewToolbar'),host:$('#stageSpatialViewport'),controls:$('#cameraControls'),getProject:()=>project,getLine:()=>currentLine(),getPerformanceLine:()=>currentPerf(),onMutation:(label,key)=>{scheduleSave(label,key);renderAll()},onStopPlayback:()=>player?.stop(),onActivate:()=>{stageDirectEditor?.exit();cameraDirectEditor?.exit()},onPreviewRefresh:()=>void renderPreviewStatic()});
 window.addEventListener('keydown',e=>{if(!$('#playtestModal').hidden){if(e.key==='Escape'){if(!$('#playtestLog').hidden){$('#playtestLog').hidden=true;return}closePlaytest();return}if((e.key==='ArrowRight'||e.key==='Enter'||e.key===' ')&&!e.target?.matches?.('button,input,textarea,select')){e.preventDefault();void playtestRuntime?.next();return}if(e.key==='ArrowLeft'&&!e.target?.matches?.('button,input,textarea,select')){e.preventDefault();void playtestRuntime?.previous();return}}if(e.key==='Escape'&&uiPrefs.layout!=='edit'){setLayoutMode('edit');return}if(e.altKey&&(e.key==='ArrowUp'||e.key==='ArrowDown')){const target=e.target;if(target?.matches?.('input,textarea,select'))return;e.preventDefault();const dir=e.key==='ArrowUp'?-1:1;if(e.shiftKey){if(project?.lines.length&&moveOutlineGroup(project,selectedIndex,'scene',dir)){scheduleSave('Scene 整块移动','outline-reorder');renderAll()}}else moveCurrentSelection(dir);return}const mod=e.ctrlKey||e.metaKey;if(!mod)return;if(e.key.toLowerCase()==='z'){e.preventDefault();if(e.shiftKey)$('#redoEdit').click();else $('#undoEdit').click()}else if(e.key.toLowerCase()==='y'){e.preventDefault();$('#redoEdit').click()}else if(e.key.toLowerCase()==='f'){e.preventDefault();$('#scriptSearch').focus();$('#scriptSearch').select()}});
 async function initRecovery(){
   $('#pastePerformance').disabled=true;$('#pastePerformanceSelected').disabled=true;setPlaybackButtons(false);updateHistoryUi();updateSelectionUi();
@@ -1336,3 +1403,7 @@ setupWorkbenchLayout();bindSplitter('#splitLeft','left');bindSplitter('#splitRig
 $('#advancedToggle').onchange=e=>setAdvancedUi(e.target.checked);bindDisclosurePrefs();setAdvancedUi(uiPrefs.advanced);const initialView=(uiPrefs.activeView==='mediaDefs'&&!uiPrefs.advanced)?'script':uiPrefs.activeView;setContentView(initialView,{persist:false});
 window.__replayLabMarkBootReady?.();
 void initRecovery().catch(error=>{console.error('Studio initialization failed',error);const status=$('#importStatus');if(status)status.textContent=`启动后的工程初始化失败：${error?.message||error}`});
+
+document.addEventListener('replaylab:open-recent',event=>void chooseWorkspace(event.detail));
+document.addEventListener('replaylab:desktop-command',event=>{if(event.detail==='home')player?.stop();});
+window.addEventListener('beforeunload',event=>{if(!workspace&&runtimeFiles.size){event.preventDefault();event.returnValue='';}});

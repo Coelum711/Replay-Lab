@@ -28,6 +28,7 @@ export const DEFAULT_SETTINGS = {
   speechPauseScale: 1,
   templateId: 'visual-novel',
   logLanguage: 'auto',
+  speechLanguage: 'auto',
   translationProvider: undefined,
   ttsProvider: 'replaylab-free'
 };
@@ -60,7 +61,7 @@ export function createProject(title = 'Untitled Replay'): ReplayProject {
     customObjectTakes: [],
     mediaDefinitions: [],
     faceTemplates: [],
-    settings: { ...DEFAULT_SETTINGS },
+    settings: structuredClone(DEFAULT_SETTINGS),
     sceneGraph: structuredClone(DEFAULT_SCENE_GRAPH_SETTINGS)
   };
 }

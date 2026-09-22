@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { VoiceboxLocalTtsProvider, VOICEBOX_LOCAL_TTS_ID } from '../web/voicebox-local-provider.js';
+import { VoiceboxLocalTtsProvider, VOICEBOX_LOCAL_TTS_ID } from '../dist/index.js';
 
 function jsonResponse(value, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
@@ -55,7 +55,7 @@ test('Voicebox synthesis submits, polls and downloads generated audio', async ()
       if (path.endsWith('/generate')) {
         const body = JSON.parse(options.body);
         assert.equal(body.profile_id, 'p1');
-        assert.equal(body.engine, 'kokoro');
+        assert.equal(body.model_size, '0.6B');
         assert.equal(body.language, 'en');
         return jsonResponse({ id: 'g1', status: 'generating' });
       }
@@ -71,7 +71,7 @@ test('Voicebox synthesis submits, polls and downloads generated audio', async ()
   const result = await provider.synthesize({ text: 'Hello', voiceId: 'p1', language: 'en-GB' });
   assert.equal(result.mime, 'audio/wav');
   assert.equal(result.duration, 1.25);
-  assert.ok(result.audio instanceof Blob);
+  assert.ok(result.audio instanceof ArrayBuffer);
   assert.ok(calls.some(([path]) => path.endsWith('/audio/g1')));
 });
 
@@ -86,3 +86,4 @@ test('launcher provides a narrow same-origin Voicebox bridge instead of relying 
   assert.match(launcher, /Voicebox endpoint is not exposed by Replay Lab/);
   assert.doesNotMatch(launcher, /\/__voicebox\/shutdown/);
 });
+

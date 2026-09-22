@@ -1,0 +1,3 @@
+# Isolated environment; do not install into Voicebox's Python environment.
+mlx-audio @ git+https://github.com/Blaizzy/mlx-audio.git@04839707811dbe2d5cc61e2a425909eb8399dc59
+soundfile>=0.13,<0.14

@@ -1,4 +1,5 @@
 import type {
+  CameraTransform,
   CustomObjectRuntimeState,
   PerformanceState,
   ReplayProject,
@@ -15,6 +16,7 @@ import type {
   StageProjectionMode,
   StageTransform
 } from './types.js';
+import { projectStageTransform } from './projection.js';
 
 const LAYER_DEFS: Array<{ id: SceneLayerId; space: SceneSpace; order: number; cameraAffected: boolean }> = [
   { id: 'world.background', space: 'world', order: 0, cameraAffected: true },
@@ -152,6 +154,7 @@ export interface SceneGraphFrameInput {
   hitPointVisible?: boolean;
   transition?: string;
   sceneGraphSettings?: SceneGraphSettings;
+  cameraTransform?: CameraTransform;
 }
 
 /**
@@ -220,8 +223,15 @@ export function buildSceneGraphSnapshot(project: ReplayProject, input: SceneGrap
   nodes.sort((a, b) => {
     const layerDelta = (layerOrder.get(a.layerId) ?? 0) - (layerOrder.get(b.layerId) ?? 0);
     if (layerDelta) return layerDelta;
-    // In future 2.5D rendering, farther world nodes are painted before nearer ones.
-    if (a.space === 'world' && b.space === 'world' && a.depth !== b.depth) return b.depth - a.depth;
+    if (a.space === 'world' && b.space === 'world') {
+      const distance = (node: SceneGraphNode) => {
+        if (settings.projection !== '2.5d' || !node.transform) return node.depth;
+        const p = projectStageTransform({ x: node.transform.x ?? 0.5, y: node.transform.y ?? 0.88, scale: node.transform.scale ?? 1, depth: node.depth }, settings.projection, input.cameraTransform);
+        return p.viewDepth ?? p.depth;
+      };
+      const delta = distance(b) - distance(a);
+      if (delta) return delta;
+    }
     return a.zBias - b.zBias || a.id.localeCompare(b.id);
   });
 
