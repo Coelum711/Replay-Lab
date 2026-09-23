@@ -29,4 +29,12 @@ test('character batch displays the failing line/provider beside its button, reta
   assert.equal(calls,2);assert.equal(blobs.size,1);assert.ok(p.lines[0].audioAssetId);assert.equal(p.lines[1].audioAssetId,null);
   failGeneration=false;host.adopt=async()=>{throw Error('test disk full')};button.click();await settle();
   assert.match(report.textContent,/第 1 句 · 保存失败/);assert.match(report.textContent,/test disk full/);assert.equal(w.document.getElementById('downloadLineAudio').disabled,false,'generated audio remains downloadable after failed disk adoption');
+  const next=structuredClone(p);next.id='new-project';next.lines.forEach(line=>{line.audioAssetId=null;});next.assets=[];
+  host.getProject=()=>next;w.__connectReplayLabHost(host);
+  assert.equal(w.document.getElementById('downloadLineAudio').disabled,true);
+  const single=w.document.getElementById('synthLine');single.click();
+  for(let i=0;i<100&&single.disabled;i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(single.disabled,false);
+  assert.match(w.document.getElementById('status').textContent,/test disk full/);
+  assert.equal(w.document.getElementById('downloadLineAudio').disabled,false,'single-line result also survives failed disk adoption');
 });

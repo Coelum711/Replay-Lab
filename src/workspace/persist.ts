@@ -34,6 +34,7 @@ export function generatedSpeechAsset(project: ReplayProject, line: ReplayLine, p
       ...(prepared.audioEdit ? {audioEdit:structuredClone(prepared.audioEdit)} : {}),
       ttsProvider: prepared.ttsProvider, targetLanguage: prepared.targetLanguage, speechText: prepared.speechText,
       inputFingerprint: prepared.inputFingerprint, duration: prepared.ttsResult.duration,
+      mouthCues: prepared.mouthCues ? structuredClone(prepared.mouthCues) : undefined,
       contentRevision: revision, updatedAt: new Date().toISOString() }
   };
 }
@@ -42,7 +43,11 @@ export function adoptGeneratedSpeechAsset(project: ReplayProject, line: ReplayLi
   const index = project.assets.findIndex(a => a.id === asset.id);
   if (index < 0) project.assets.push(asset); else project.assets[index] = asset;
   line.audioAssetId = asset.id;
-  if(assetEdit(asset)?.kind==='curve-instruct' || assetEdit(asset)?.kind==='restore' || assetEdit(asset)?.resetMouthTiming){
+  const cues = asset.metadata?.mouthCues as ReplayLine['mouthCues'];
+  if(cues?.length){
+    line.mouthCues = structuredClone(cues);
+    line.mouth = 'timed';
+  }else if(!assetEdit(asset) || assetEdit(asset)?.kind==='curve-instruct' || assetEdit(asset)?.kind==='restore' || assetEdit(asset)?.resetMouthTiming){
     // A newly performed or restored recording has a different timing reference.
     delete line.mouthCues;
     if(line.mouth==='timed')line.mouth='auto';
@@ -73,11 +78,19 @@ export async function persistAssetFile(
   workspace: ProjectWorkspace, project: ReplayProject, asset: MediaAsset, data: WorkspaceData, path: string
 ): Promise<PersistedAssetResult> {
   await workspace.assertProjectCurrent?.();
+  const revision = makeId('media');
+  // Write a new file when relinking, so a rejected manifest never loses the old bytes.
+  if(await workspace.exists(path)){
+    const dot=path.lastIndexOf('.'), slash=path.lastIndexOf('/');
+    path=dot>slash ? `${path.slice(0,dot)}_${revision}${path.slice(dot)}` : `${path}_${revision}`;
+  }
   await workspace.write(path, data, asset.mime);
-  asset.uri = projectUri(path);
-  asset.sourcePath = path;
-  asset.metadata = { ...asset.metadata, contentRevision: makeId('media'), updatedAt: new Date().toISOString() };
+  const updated = { ...asset, uri: projectUri(path), sourcePath: path,
+    metadata: { ...asset.metadata, contentRevision: revision, updatedAt: new Date().toISOString() } };
+  const candidate = structuredClone(project), index = candidate.assets.findIndex(item=>item.id===asset.id);
+  if(index<0)candidate.assets.push(updated);else candidate.assets[index]=updated;
+  await workspace.saveProject(candidate);
+  Object.assign(asset, updated);
   if (!project.assets.some(item => item.id === asset.id)) project.assets.push(asset);
-  await workspace.saveProject(project);
   return { assetId: asset.id, path };
 }

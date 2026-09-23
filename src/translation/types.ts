@@ -1,6 +1,7 @@
 import type { AccentTranslationHint } from '../pronunciation/types.js';
 
 export interface TranslationRequest {
+  signal?: AbortSignal;
   text: string;
   sourceLanguage?: string;
   targetLanguage: string;

@@ -25,6 +25,18 @@ test('streamed export supports seek/overwrite and retains unmodified bytes',asyn
   await broker.chunk(token,new Uint8Array([0,1,2,3]));await broker.chunk(token,{type:'write',position:1,data:new Uint8Array([9])});await broker.close(token);
   assert.deepEqual([...await broker.read(id,'exports/movie.mp4')],[0,9,2,3]);
 });
+test('native truncate moves a cursor beyond EOF back to the new end',async t=>{
+  const {broker,id}=await setup(t),token=await broker.openWrite(id,'exports/truncated.mp4');
+  await broker.chunk(token,new Uint8Array([1,2,3,4]));
+  await broker.chunk(token,{type:'truncate',size:2});
+  await broker.chunk(token,new Uint8Array([9]));await broker.close(token);
+  assert.deepEqual([...await broker.read(id,'exports/truncated.mp4')],[1,2,9]);
+});
+test('parallel first writes can create the same character directory',async t=>{
+  const {broker,id}=await setup(t);
+  await Promise.all(Array.from({length:8},(_,i)=>broker.write(id,`assets/voice/new-character/${i}.wav`,String(i))));
+  assert.equal((await broker.list(id,'assets/voice/new-character')).length,8);
+});
 test('native manifests reject stale writers including other grants of the same root',async t=>{
   const {root,broker,id}=await setup(t);const other=await broker.grant(root);
   const first=await broker.save(id,'{"title":"first"}',null);

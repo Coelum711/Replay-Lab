@@ -60,8 +60,13 @@ export class BrowserFileSystemWorkspace implements ProjectWorkspace {
     const { parent, name } = await this.parentAndName(path, true);
     const file = await parent.getFileHandle(name, { create: true });
     const writable = await file.createWritable();
-    await writable.write(await dataToBlob(data, mime));
-    await writable.close();
+    try {
+      await writable.write(await dataToBlob(data, mime));
+      await writable.close();
+    } catch(error) {
+      try { await writable.abort(); } catch { /* Retain the original error. */ }
+      throw error;
+    }
   }
 
   async createWritable(path: string): Promise<WritableStream> {
@@ -77,7 +82,10 @@ export class BrowserFileSystemWorkspace implements ProjectWorkspace {
   }
 
   async exists(path: string): Promise<boolean> {
-    try { await this.read(path); return true; } catch { return false; }
+    try { await this.read(path); return true; } catch(error) {
+      if ((error as Error)?.name === 'NotFoundError') return false;
+      throw error;
+    }
   }
 
   async remove(path: string): Promise<void> {

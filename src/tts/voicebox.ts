@@ -11,6 +11,20 @@ export interface VoiceboxLocalTtsOptions {
 }
 
 function trimBaseUrl(value: string): string { return value.replace(/\/+$/, ''); }
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve,reject)=>{
+    const abort=()=>{clearTimeout(timer);reject(signal.reason);};
+    const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},ms);
+    signal.addEventListener('abort',abort,{once:true});
+  });
+}
+function generationStatus(row: Record<string, any>): string {
+  const status=String(row?.status || '').toLowerCase();
+  if(!status)throw new Error('Voicebox 返回的生成记录缺少 status 状态，请检查服务版本。');
+  if(status==='failed'||status==='cancelled'||status==='canceled')throw new Error(`Voicebox generation ${status}${row.error ? `: ${row.error}` : ''}`);
+  return status;
+}
 function baseLanguage(language?: string): string | undefined {
   const value = (language || '').trim().toLowerCase();
   if (!value || value === 'auto') return undefined;
@@ -115,40 +129,45 @@ export class VoiceboxLocalTtsProvider implements TtsProvider {
     return { audio, mime: 'audio/wav', duration };
   }
 
-  private async waitForGeneration(id: string): Promise<Record<string, any>> {
-    const start = Date.now();
-    while (Date.now() - start < this.timeoutMs) {
-      const response = await this.fetchImpl(`${this.baseUrl}/history/${encodeURIComponent(id)}`,{signal:AbortSignal.timeout(Math.max(1,this.timeoutMs-(Date.now()-start)))});
+  private async waitForGeneration(id: string, signal: AbortSignal): Promise<Record<string, any>> {
+    while (true) {
+      signal.throwIfAborted();
+      const response = await this.fetchImpl(`${this.baseUrl}/history/${encodeURIComponent(id)}`,{signal});
       if (!response.ok) throw new Error(`Voicebox generation status failed: HTTP ${response.status}`);
       const row = await response.json() as Record<string, any>;
-      const status = String(row.status || 'completed');
+      signal.throwIfAborted();
+      const status = generationStatus(row);
       if (status === 'completed') return row;
-      if (status === 'failed') throw new Error(`Voicebox generation failed${row.error ? `: ${row.error}` : ''}`);
-      await new Promise(resolve => setTimeout(resolve, this.pollIntervalMs));
+      await delay(this.pollIntervalMs,signal);
     }
-    throw new Error('Voicebox generation timed out. The local model may still be downloading or the Voicebox queue may be stuck.');
   }
 
   async synthesize(request: TtsRequest): Promise<TtsResult> {
+    request.signal?.throwIfAborted();
     if (!request.voiceId) throw new Error('尚未绑定 Voicebox Profile。请在这个角色的声音设置中，选择一个已建立的 Voicebox 声音。');
     if (request.experimentalCloneInstruct) return this.synthesizeExperimental(request);
+    const deadline=AbortSignal.timeout(this.timeoutMs);
+    const signal=request.signal ? AbortSignal.any([request.signal,deadline]) : deadline;
     const language = baseLanguage(request.language);
     const payload: Record<string, unknown> = { profile_id: request.voiceId, text: request.text };
     if (language) payload.language = language;
     if (Number.isInteger(request.seed)) payload.seed = request.seed;
     payload.model_size = request.modelSize || '0.6B';
     const response = await this.fetchImpl(`${this.baseUrl}/generate`, {
-      signal:AbortSignal.timeout(this.timeoutMs),
+      signal,
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
     });
     if (!response.ok) throw new Error(`Voicebox generation request failed: HTTP ${response.status}${await response.text().then(x => x ? ` · ${x.slice(0, 240)}` : '').catch(() => '')}`);
     const generation = await response.json() as Record<string, any>;
+    signal.throwIfAborted();
     const id = String(generation.id || generation.generation_id || '');
     if (!id) throw new Error('Voicebox did not return a generation id.');
-    const complete = String(generation.status || '') === 'completed' ? generation : await this.waitForGeneration(id);
-    const audioResponse = await this.fetchImpl(`${this.baseUrl}/audio/${encodeURIComponent(id)}`,{signal:AbortSignal.timeout(30000)});
+    const complete = generation.status && generationStatus(generation) === 'completed' ? generation : await this.waitForGeneration(id,signal);
+    signal.throwIfAborted();
+    const audioResponse = await this.fetchImpl(`${this.baseUrl}/audio/${encodeURIComponent(id)}`,{signal:AbortSignal.any([signal,AbortSignal.timeout(30000)])});
     if (!audioResponse.ok) throw new Error(`Voicebox audio download failed: HTTP ${audioResponse.status}`);
     const audio = await audioResponse.arrayBuffer();
+    signal.throwIfAborted();
     return { audio, mime: audioResponse.headers.get('content-type') || 'audio/wav', duration: Number(complete.duration) || undefined };
   }
 }

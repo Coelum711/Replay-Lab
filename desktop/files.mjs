@@ -29,7 +29,15 @@ export class WorkspaceFiles {
         current=actual;
       }catch(error){
         if(error.code!=='ENOENT')throw error;
-        if(i<parts.length-1){if(!createParents)throw error;await fs.mkdir(current);}
+        if(i<parts.length-1){
+          if(!createParents)throw error;
+          try{await fs.mkdir(current);}catch(createError){if(createError.code!=='EEXIST')throw createError;}
+          // Another write can create this directory concurrently. Revalidate before use.
+          const actual=await fs.realpath(current);
+          if(!inside(root,actual))throw Error('链接指向工程目录外，已停止操作');
+          if(!(await fs.stat(actual)).isDirectory())throw Error('工程路径不是文件夹');
+          current=actual;
+        }
       }
     }
     return current;
@@ -65,7 +73,7 @@ export class WorkspaceFiles {
       if(!Number.isSafeInteger(input.position)||input.position<0)throw Error('无效写入位置');stream.position=input.position;return;
     }
     if(input?.type==='truncate'){
-      if(!Number.isSafeInteger(input.size)||input.size<0)throw Error('无效文件尺寸');await stream.handle.truncate(input.size);return;
+      if(!Number.isSafeInteger(input.size)||input.size<0)throw Error('无效文件尺寸');await stream.handle.truncate(input.size);stream.position=Math.min(stream.position,input.size);return;
     }
     let position=stream.position,data=input;
     if(input?.type==='write'){data=input.data;position=input.position??position;}

@@ -354,14 +354,14 @@ test('translation changes spoken text but never display Log text, and caches by 
 });
 
 
-test('TTS phoneme timing automatically becomes language-aware mouth cues', async () => {
+test('TTS phoneme timing stays on the candidate until adoption', async () => {
   const project=TextImporter.parse('Arthur: bad thought');
   project.settings.logLanguage='en-GB';
   project.settings.ttsProvider='phoneme-tts';
   const tts=new TtsRegistry().register({id:'phoneme-tts',label:'phoneme',async synthesize(){return {audio:new Uint8Array([1]),mime:'audio/mock',phonemes:[{start:0,end:.08,phoneme:'B'},{start:.08,end:.2,phoneme:'AE1'},{start:.2,end:.3,phoneme:'DH'}]}}});
-  await prepareLineSpeech(project,project.lines[0],{tts,synthesize:true});
-  assert.equal(project.lines[0].mouth,'timed');
-  assert.deepEqual(project.lines[0].mouthCues.map(c=>c.viseme),['M','AE','TH']);
+  const prepared=await prepareLineSpeech(project,project.lines[0],{tts,synthesize:true});
+  assert.equal(project.lines[0].mouth,'auto');
+  assert.deepEqual(prepared.mouthCues.map(c=>c.viseme),['M','AE','TH']);
 });
 
 test('character without language slot speaks Log language without translation', async () => {

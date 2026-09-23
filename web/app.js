@@ -504,8 +504,13 @@ async function synthesizeLine(line, { autoplay = false } = {}) {
     regenerateGeneratedAudio: true
   });
   if (prepared.audioSource === 'imported') return { prepared, entry: null };
-  await persistPreparedLineAudio(line, prepared);
   const entry = storeGeneratedLineAudio(line, prepared);
+  try { await persistPreparedLineAudio(line, prepared); }
+  catch(error) { error.voicePhase='保存'; throw error; }
+  finally {
+    if(entry&&project===context.owner&&speechInputFingerprint(context.owner,line)===prepared.inputFingerprint)entry.fingerprint=lineFingerprint(line);
+    syncCurrentAudioUi();
+  }
   if (autoplay && entry && currentLine()?.id===line.id) {
     const audio = $('#lineAudioPreview');
     audio.src = entry.url;
@@ -1287,8 +1292,9 @@ $('#synthLine').addEventListener('click', async () => {
     renderLinePreview(prepared.speechText);
   } catch (error) {
     if (isWorkspaceConflictError(error)) showVoiceWorkspaceConflict(error);
-    setLineSpeechState('生成失败', 'error');
-    setStatus(`语音生成失败：${error.message || error}`, 'error');
+    const phase=error.voicePhase||'生成';
+    setLineSpeechState(phase==='保存'?'保存失败 · 音频可下载':'生成失败', 'error');
+    setStatus(`语音${phase}失败：${error.message || error}${phase==='保存'?'；生成结果已保留，可点击下载。':''}`, 'error');
   } finally {
     button.disabled = false;
     button.textContent = oldText;
