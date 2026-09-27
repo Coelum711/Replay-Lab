@@ -11,7 +11,12 @@ export class ProjectLinkHost {
     if (this.owner.closed || this.getProject()!==project) throw new StaleSpeechError('Studio 已关闭或切换工程；结果未写入新工程。请重新打开声音页。');
   }
   state() { return {project:this.getProject(), workspace:this.getWorkspace(), selectedLineId:this.getSelectedLineId()}; }
-  async changed(project, immediate=false) { this.assert(project); return this.onChanged(immediate); }
+  async changed(project, immediate=false) {
+    this.assert(project);
+    const saved=await this.onChanged(immediate);
+    this.assert(project);
+    return saved;
+  }
   async adopt(project,line,prepared) {
     this.assert(project);
     const guard=captureSpeechGuard(project,line),workspace=this.getWorkspace();

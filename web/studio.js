@@ -6,6 +6,7 @@ import { FacePackageController } from './face-package-controller.js';
 import { FaceFitController, FACE_FEATURE_LABELS, FACE_BASIC_FEATURES, FACE_SPLIT_FEATURES, faceFeatureEditorMarkup } from './face-fit-controller.js';
 import { CharacterSpeechController } from './character-speech-controller.js';
 import { ProjectLinkHost } from './project-link.js';
+import { diagnoseWorkspaceAssets } from './workspace-diagnostics.js';
 import { createExportSession } from './export-session.js';
 import './desktop-client.js';
 import { VirtualScriptList } from './virtual-script-list.js';
@@ -1207,7 +1208,7 @@ function navigateDiagnostic(issue){
   if(issue.assetId&&project.assets.some(asset=>asset.id===issue.assetId)){setContentView('assets');renderAll();requestAnimationFrame(()=>flashElement(document.querySelector(`[data-asset-id="${CSS.escape(issue.assetId)}"]`)));return true}
   return false;
 }
-async function runDiagnostics(){if(!project)return;const issues=diagnoseProject(project);if(workspace){for(const asset of project.assets){if(!asset.sourcePath||/^(data:|https?:|blob:)/i.test(asset.sourcePath))continue;try{if(!(await workspace.exists(asset.sourcePath)))issues.push({code:'missing-workspace-file',severity:'error',assetId:asset.id,message:`工程目录缺少文件：${asset.sourcePath}`})}catch{}}}else{for(const asset of project.assets){if(runtimeFiles.has(asset.id))continue;if(asset.uri?.startsWith('project://')||asset.sourcePath?.startsWith('assets/'))issues.push({code:'workspace-disconnected',severity:'warning',assetId:asset.id,message:`素材需要重新连接原工程目录或重新链接：${asset.name}`})}}
+async function runDiagnostics(){if(!project)return;const issues=diagnoseProject(project);if(workspace){issues.push(...await diagnoseWorkspaceAssets(project.assets,workspace))}else{for(const asset of project.assets){if(runtimeFiles.has(asset.id))continue;if(asset.uri?.startsWith('project://')||asset.sourcePath?.startsWith('assets/'))issues.push({code:'workspace-disconnected',severity:'warning',assetId:asset.id,message:`素材需要重新连接原工程目录或重新链接：${asset.name}`})}}
   const host=$('#diagnosticsView');host.innerHTML='';const counts={error:0,warning:0,info:0};for(const issue of issues){counts[issue.severity]=(counts[issue.severity]||0)+1;const item=document.createElement('button');const canJump=Boolean(issue.lineId||issue.characterId||issue.assetId);item.className=`diagnostic ${issue.severity}${canJump?' can-jump':''}`;item.style.textAlign='left';item.innerHTML=`<strong>${issue.severity==='error'?'错误':issue.severity==='warning'?'警告':'提示'}</strong>${canJump?'<span class="summary-meta">定位 →</span>':''}<div>${escapeHtml(issue.message)}</div>`;if(canJump)item.onclick=()=>navigateDiagnostic(issue);else item.setAttribute('aria-disabled','true');host.append(item)}
   if(!issues.length)host.innerHTML='<div class="muted">没有发现结构性问题。</div>';$('#diagnosticsStatus').textContent=`${counts.error||0} 错误 · ${counts.warning||0} 警告`;}
 $('#runDiagnostics').onclick=runDiagnostics;

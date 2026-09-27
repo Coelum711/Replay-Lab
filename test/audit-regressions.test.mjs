@@ -120,6 +120,12 @@ test('linked host rejects a switched project while retaining the old draft on sa
   const result=await host.adopt(p,p.lines[0],{displayText:'Hello',speechText:'Hello',ttsResult:{audio:new Uint8Array([1]),mime:'audio/wav'}});
   assert.equal(result.saved,false);assert.ok(p.lines[0].audioAssetId);
 });
+test('linked host reports a project switch during asynchronous save',async()=>{
+  const p=english();let current=p;
+  const host=new ProjectLinkHost({owner:{closed:false},getProject:()=>current,getWorkspace:()=>null,
+    getSelectedLineId:()=>p.lines[0].id,putAudio(){},onChanged:async()=>{current=english();return true;}});
+  await assert.rejects(()=>host.changed(p,true),{code:'stale-speech'});
+});
 test('export captures stage settings and asset revisions independently of later edits',async()=>{
   const p=english();p.assets.push({id:'v',kind:'voice',sourcePath:'old.wav'});p.lines[0].audioAssetId='v';
   const files=new Map([['v',new Blob(['old'])]]),perf=compilePerformance(p);
