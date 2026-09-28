@@ -68,7 +68,8 @@
   </section>
 
   <section class="card stack">
-    <div><strong>角色声音</strong><div class="muted">通常只需要选默认语言和 Voice。口音 / 地区属于可选高级控制，默认折叠在每个角色下面。</div><div class="muted">TTS 若提供音素时间：语言专用规则 → 通用发音口型 → A/I/U/E/O → 开/闭嘴；小众语言不需要单独画完整音素库。</div></div>
+    <div><strong>角色声音</strong><div class="muted">先找到角色，再选择语言和声线。口音与地区设置可按需展开。</div></div>
+    <div class="row"><input id="voiceCharacterSearch" type="search" aria-label="查找配音角色" placeholder="输入角色名，快速找到声音设置" style="flex:1;min-width:180px"><button id="clearVoiceCharacterSearch" type="button">显示全部角色</button><span id="voiceCharacterCount" class="muted" role="status"></span></div>
     <div id="characters" class="stack"></div>
   </section>
 

@@ -123,6 +123,7 @@ let playtestRecordingPending = false;
 let playtestObjectHintTimer = null;
 let playtestOriginIndex = 0;
 let saveTimer = null;
+let editVersion = 0;
 const runtimeFiles = new Map();
 const history = new ProjectHistory({limit:120,coalesceMs:750});
 const recoveryStore = new IndexedDbProjectRecoveryStore();
@@ -218,9 +219,11 @@ function updateExportEstimate(){const p=selectedExportPreset(),duration=performa
 function virtualFile(file){return {name:file.name,relativePath:file.webkitRelativePath||file.name,type:file.type,async text(){return await file.text()}}}
 function mutationKey(){const el=document.activeElement;return el?.id||el?.dataset?.slot||el?.dataset?.view||'edit'}
 function updateHistoryUi(){const state=history.state();$('#undoEdit').disabled=!state.canUndo;$('#redoEdit').disabled=!state.canRedo;$('#historyState').textContent=state.canUndo?`${state.cursor} 步可撤销`:'暂无修改'}
+function emitProjectState(){if(project)document.dispatchEvent(new CustomEvent('replaylab:project-state',{detail:{title:project.title,hasContent:!!workspace||project.lines.length>0,connected:!!workspace}}))}
+function setSaveStatus(text,tone=''){$('#projectState').textContent=text;$('#projectState').className=`status ${tone}`.trim();emitProjectState()}
 function scheduleRecovery(){if(!project)return;clearTimeout(recoveryTimer);recoveryTimer=setTimeout(()=>void saveRecoverySnapshot(),500)}
-async function saveRecoverySnapshot(){if(!project)return;try{await recoveryStore.save(project,{label:project.title||'临时工程',workspaceId:workspace?.id||null,workspaceLabel:workspace?.label||null})}catch(error){console.warn('Recovery save failed',error)}}
-function scheduleSave(label='编辑',key=mutationKey()){if(!project)return;history.capture(project,label,key);updateHistoryUi();scheduleRecovery();if(!workspace||workspaceConflict)return;clearTimeout(saveTimer);saveTimer=setTimeout(()=>void saveIfConnected(),350)}
+async function saveRecoverySnapshot(){if(!project)return;const owner=project;try{await recoveryStore.save(project,{label:project.title||'临时工程',workspaceId:workspace?.id||null,workspaceLabel:workspace?.label||null});if(project===owner&&!workspace)setSaveStatus('未保存到文件夹')}catch(error){console.warn('Recovery save failed',error);if(project===owner&&!workspace)setSaveStatus('自动备份失败 · 请保存','warn')}}
+function scheduleSave(label='编辑',key=mutationKey()){if(!project)return;editVersion++;history.capture(project,label,key);updateHistoryUi();scheduleRecovery();if(!workspace||workspaceConflict)return;setSaveStatus('有修改待保存','warn');clearTimeout(saveTimer);saveTimer=setTimeout(()=>void saveIfConnected(),350)}
 function mediaKinds(){return new Set(['voice','bgm','ambient','sfx'])}
 function targetLineIds(){return selectedLineIds.size?[...selectedLineIds]:(currentLine()?[currentLine().id]:[])}
 function confirmReplaceCurrent(action='导入'){if(!project?.lines?.length)return true;return confirm(`${action}会替换整个当前工程：${project.lines.length} 行剧本，以及现有角色素材绑定、共享模板和声音/演出设置都会被新导入内容替换。若这些内容需要保留，请取消并勾选“重新导入时保留角色素材 / 声音 / 模板”，或先导出 Project JSON。继续吗？`)}
@@ -266,6 +269,7 @@ function showWorkspaceConflict(error){
   $('#projectState').textContent='目录有新版本 · 已暂停保存';$('#projectState').className='status warn';
   $('#reloadWorkspace').hidden=false;$('#saveProject').disabled=true;
   $('#workspaceDetail').textContent=`检测到另一个 Replay Lab 窗口或程序修改了工程目录。为避免覆盖，本页已停止自动保存。若要保留本页改动，请先导出 Project JSON；然后点“重新载入目录版本”。${error?.message?` · ${error.message}`:''}`;
+  emitProjectState();
 }
 async function chooseWorkspace(recentId){
   const previousWorkspace=workspace;
@@ -279,9 +283,9 @@ async function chooseWorkspace(recentId){
       for(const asset of project.assets){const file=runtimeFiles.get(asset.id);if(!file)continue;const path=`${assetDirectory(asset.kind)}/${asset.id}_${sanitizePathPart(file.name)}`;await persistAssetFile(workspace,project,asset,file,path)}
       await workspace.saveProject(project);
     }
-    $('#projectState').textContent='工程目录 · 自动保存';$('#projectState').className='status ok';$('#saveProject').disabled=false;
+    $('#projectState').textContent='已保存到文件夹';$('#projectState').className='status ok';$('#saveProject').disabled=false;
     await refreshWorkspace();invalidateMediaCaches();renderAll();
-  }catch(error){workspace=previousWorkspace;if(isWorkspaceConflictError(error))showWorkspaceConflict(error);else if(error?.name!=='AbortError')$('#workspaceDetail').textContent=`目录连接失败：${error.message||error}`}
+  }catch(error){workspace=previousWorkspace;if(isWorkspaceConflictError(error))showWorkspaceConflict(error);else if(error?.name!=='AbortError'){$('#workspaceDetails').open=true;$('#workspaceDetail').textContent=`目录连接失败：${error.message||error}`;setSaveStatus('目录连接失败 · 请重试','warn')}}
 }
 function renderWorkspaceSummary(){
   if(!workspace)return;
@@ -296,15 +300,19 @@ async function refreshWorkspace(){
 }
 async function saveIfConnected(){
   if(!workspace||!project||workspaceConflict)return false;
+  const owner=project,directory=workspace,version=editVersion;
+  setSaveStatus('正在保存…');
   try{
-    await workspace.saveProject(project);
+    await directory.saveProject(owner);
+    if(project!==owner||workspace!==directory)return false;
     // Saving the manifest must stay cheap. Asset counts only change on explicit
     // asset/workspace operations, which already call refreshWorkspace().
     workspaceSummary.projectSaved=true;
     renderWorkspaceSummary();
+    setSaveStatus(version===editVersion?'已保存到文件夹':'有修改待保存',version===editVersion?'ok':'warn');
     return true;
   }
-  catch(error){if(isWorkspaceConflictError(error)){showWorkspaceConflict(error);return false}$('#workspaceDetail').textContent=`自动保存失败：${error.message||error}`;$('#projectState').textContent='自动保存失败';$('#projectState').className='status warn';return false}
+  catch(error){if(project!==owner||workspace!==directory)return false;if(isWorkspaceConflictError(error)){showWorkspaceConflict(error);return false}$('#workspaceDetail').textContent=`保存失败：${error.message||error}`;setSaveStatus('保存失败 · 请重试','warn');return false}
 }
 
 function compile(){
@@ -1073,7 +1081,7 @@ function setContentView(view,{persist=true,render=true}={}){
   syncCenterContext();
   if(render)renderCurrentView();
 }
-function renderAll(){if(!project)return;selectedIndex=Math.max(0,Math.min(selectedIndex,Math.max(0,project.lines.length-1)));refreshSearch();compile();updateToolbarOptions();renderCurrentView();renderInspector();stageDirectEditor?.render();cameraDirectEditor?.render();sceneViewport?.render();renderStageQuickControls();renderVoiceLineWorkbench();audioWorkbench?.render();updateSelectionUi();updateHistoryUi();void renderPreviewStatic();document.dispatchEvent(new CustomEvent('replaylab:project-state',{detail:{title:project.title,hasContent:!!workspace||project.lines.length>0,connected:!!workspace}}))}
+function renderAll(){if(!project)return;selectedIndex=Math.max(0,Math.min(selectedIndex,Math.max(0,project.lines.length-1)));refreshSearch();compile();updateToolbarOptions();renderCurrentView();renderInspector();stageDirectEditor?.render();cameraDirectEditor?.render();sceneViewport?.render();renderStageQuickControls();renderVoiceLineWorkbench();audioWorkbench?.render();updateSelectionUi();updateHistoryUi();void renderPreviewStatic();emitProjectState()}
 
 function bindEdit(id,fn,event='change',fullRender=true){$('#'+id).addEventListener(event,()=>{const line=currentLine();if(!line)return;fn(line,$('#'+id).value);scheduleSave('编辑台词',`${line.id}:${id}`);if(fullRender)renderAll()})}
 bindEdit('speakerEdit',(l,v)=>l.speakerId=v);bindEdit('typeEdit',(l,v)=>{l.type=v;if(v==='command'){l.text=l.text.startsWith('/')?l.text:'/wait 0';l.mouth='off';syncCommandLine(l)}else l.command=null;if(v==='dice')l.diceRolls??=[];if(v==='hitpoint')ensureHitPoint(l);if(v==='wheel'){l.wheel??={title:'转盘',mode:'history',steps:[{title:'转盘',options:[{id:'a',label:'A',weight:1},{id:'b',label:'B',weight:1}],resultId:'a',resultLabel:'A'}],blockingAuto:false};l.mouth='off';l.duration??=2.8}if(v==='bubble'){ensureBubble(l);l.mouth='off'}});bindEdit('durationEdit',(l,v)=>l.duration=v===''?null:Number(v));bindEdit('textEdit',(l,v)=>{l.text=v;if(l.type==='command')syncCommandLine(l);if(l.type==='bubble')ensureBubble(l).mainText=v},'input',false);$('#textEdit').addEventListener('change',()=>renderAll());bindEdit('expressionEdit',(l,v)=>{if(v==='__inherit__'){l.expressionMode='inherit';return}l.expressionMode='set';l.expression=v});bindEdit('mouthEdit',(l,v)=>l.mouth=v);bindEdit('sfxEdit',(l,v)=>l.sfxAssetId=v||null);bindEdit('textEffectEdit',(l,v)=>l.textEffect=v);bindEdit('textEffectDurationEdit',(l,v)=>l.textEffectDuration=v===''?null:Number(v));
@@ -1126,7 +1134,7 @@ $('#diceRollsEdit').addEventListener('change',()=>{const l=currentLine();if(!l)r
 for(const id of ['hpLabelEdit','hpMaxEdit','hpBeforeEdit','hpAfterEdit'])$('#'+id).addEventListener('change',()=>{const l=currentLine();if(!l)return;const hp=ensureHitPoint(l);hp.label=$('#hpLabelEdit').value||hp.label;const max=Number($('#hpMaxEdit').value),before=Number($('#hpBeforeEdit').value),after=Number($('#hpAfterEdit').value);if(Number.isFinite(max)&&max>0)hp.max=max;if(Number.isFinite(before))hp.before=before;if(Number.isFinite(after))hp.after=after;scheduleSave('编辑 HP 演出',`${l.id}:hp`);renderAll()});
 
 $('#projectTitle').onchange=()=>{if(!project)return;project.title=$('#projectTitle').value.trim()||'未命名 Replay';scheduleSave('重命名工程','project-title');renderAll()};
-$('#newProject').onclick=async()=>{if(project?.lines?.length&&!confirm('新建工程会替换当前内容，并更新自动恢复快照。若尚未保存到工程目录，请先保存或导出 Project JSON。继续吗？'))return;workspace=null;runtimeFiles.clear();$('#projectState').textContent='临时 · 自动恢复';$('#projectState').className='status';$('#saveProject').disabled=true;$('#workspaceDetail').textContent='未连接工程目录。剧本会自动恢复；图片和音频最好连接目录后保存。';await setProject(createProject('未命名 Replay'),'新建工程');$('#importDetails').open=true};
+$('#newProject').onclick=async()=>{if(project?.lines?.length&&!confirm('新建工程会替换当前内容，并更新自动恢复快照。若尚未保存到工程目录，请先保存或导出 Project JSON。继续吗？'))return;workspace=null;runtimeFiles.clear();$('#projectState').textContent='未保存到文件夹';$('#projectState').className='status';$('#saveProject').disabled=true;$('#workspaceDetail').textContent='未连接工程目录。剧本会自动恢复；图片和音频最好连接目录后保存。';await setProject(createProject('未命名 Replay'),'新建工程');$('#importDetails').open=true};
 $('#chooseWorkspace').onclick=chooseWorkspace;$('#saveProject').onclick=async()=>{await saveIfConnected()};$('#reloadWorkspace').onclick=async()=>{if(!workspace)return;if(project&&history.canUndo()&&!confirm('重新载入会用目录中的最新工程替换本页当前状态。若本页改动需要保留，请先在右侧导出 Project JSON。继续吗？'))return;try{const latest=await workspace.loadProject();if(!latest){$('#workspaceDetail').textContent='目录里没有 project.replaylab.json。';return}workspaceConflict=false;$('#reloadWorkspace').hidden=true;$('#saveProject').disabled=false;$('#projectState').textContent='工程目录 · 自动保存';$('#projectState').className='status ok';runtimeFiles.clear();project=normalizeReplayProject(latest);selectedIndex=0;selectedBeatId=null;selectedLineIds.clear();collapsedGroups.clear();performanceClipboard=null;history.reset(project,'重新载入目录版本');invalidateMediaCaches();renderAll();await refreshWorkspace();$('#importStatus').textContent='已重新载入目录中的最新工程。'}catch(error){$('#workspaceDetail').textContent=`重新载入失败：${error.message||error}`}};
 $('#parseText').onclick=async()=>{const text=$('#logInput').value.trim();if(!text){$('#importStatus').textContent='先粘贴一段 Log，或改用文件导入。';return}if(!confirmScriptReimport('解析这份 Log'))return;const importer=registry.choose(text,{sourceName:'log.txt'});if(!importer){$('#importStatus').textContent='没有识别出 Log 格式。';return}const imported=importer.parse(text,{title:project?.title||'Replay'});if(preservingSetupOnReimport()){applyScriptReimport(imported,`重新解析 Log · 保留角色设置`);return}runtimeFiles.clear();invalidateMediaCaches();await setProject(imported,importer.label);$('#importDetails').open=false};
 $('#parseStory').onclick=async()=>{const text=$('#logInput').value.trim();if(!text){$('#importStatus').textContent='先粘贴剧情台本。';return}if(!confirmScriptReimport('解析这份剧情台本'))return;const imported=parseStoryScript(text,project?.title||'Replay');if(preservingSetupOnReimport()){applyScriptReimport(imported,'重新解析剧情台本 · 保留角色设置');return}runtimeFiles.clear();invalidateMediaCaches();await setProject(imported,'剧情台本 / 伪 TRPG 文游');$('#importDetails').open=false};
@@ -1386,7 +1394,7 @@ $('#exportWebm').onclick=async()=>{
 stageDirectEditor=new StageDirectEditorController({host:$('#stageDirectEditor'),toggle:$('#stageEditToggle'),hint:$('#stageEditHint'),copyButton:$('#stageCopyComposition'),pasteButton:$('#stagePasteComposition'),inheritButton:$('#stageInheritComposition'),resetButton:$('#stageResetAuto'),projectionControl:$('#stageProjectionMode'),onionControls:$('#stageOnionControls'),onionPrev:$('#onionPrev'),onionNext:$('#onionNext'),onionScope:$('#onionScope'),onionOpacity:$('#onionOpacity'),getProject:()=>project,getLine:()=>currentLine(),getPerformanceLine:()=>currentPerf(),getPreviousPerformanceLine:()=>performanceDoc?.lines?.[selectedIndex-1]??null,getNextPerformanceLine:()=>performanceDoc?.lines?.[selectedIndex+1]??null,resolveAsset,onMutation:(label,key)=>{scheduleSave(label,key);renderAll()},onStopPlayback:()=>player?.stop(),onPreviewRefresh:()=>void renderPreviewStatic(),onActivate:()=>{cameraDirectEditor?.exit();sceneViewport?.exit()}});
 cameraDirectEditor=new CameraDirectEditorController({host:$('#cameraDirectEditor'),toggle:$('#cameraEditToggle'),hint:$('#cameraEditHint'),inheritButton:$('#cameraInherit'),resetButton:$('#cameraReset'),getLine:()=>currentLine(),getPerformanceLine:()=>currentPerf(),onMutation:(label,key)=>{scheduleSave(label,key);renderAll()},onStopPlayback:()=>player?.stop(),onPreviewRefresh:()=>void renderPreviewStatic(),onActivate:()=>{stageDirectEditor?.exit();sceneViewport?.showCameraControls()}});
 sceneViewport=new SceneViewportController({root:$('#sceneViewToolbar'),host:$('#stageSpatialViewport'),controls:$('#cameraControls'),getProject:()=>project,getLine:()=>currentLine(),getPerformanceLine:()=>currentPerf(),onMutation:(label,key)=>{scheduleSave(label,key);renderAll()},onStopPlayback:()=>player?.stop(),onActivate:()=>{stageDirectEditor?.exit();cameraDirectEditor?.exit()},onPreviewRefresh:()=>void renderPreviewStatic()});
-window.addEventListener('keydown',e=>{if(!$('#playtestModal').hidden){if(e.key==='Escape'){if(!$('#playtestLog').hidden){$('#playtestLog').hidden=true;return}closePlaytest();return}if((e.key==='ArrowRight'||e.key==='Enter'||e.key===' ')&&!e.target?.matches?.('button,input,textarea,select')){e.preventDefault();void playtestRuntime?.next();return}if(e.key==='ArrowLeft'&&!e.target?.matches?.('button,input,textarea,select')){e.preventDefault();void playtestRuntime?.previous();return}}if(e.key==='Escape'&&uiPrefs.layout!=='edit'){setLayoutMode('edit');return}if(e.altKey&&(e.key==='ArrowUp'||e.key==='ArrowDown')){const target=e.target;if(target?.matches?.('input,textarea,select'))return;e.preventDefault();const dir=e.key==='ArrowUp'?-1:1;if(e.shiftKey){if(project?.lines.length&&moveOutlineGroup(project,selectedIndex,'scene',dir)){scheduleSave('Scene 整块移动','outline-reorder');renderAll()}}else moveCurrentSelection(dir);return}const mod=e.ctrlKey||e.metaKey;if(!mod)return;if(e.key.toLowerCase()==='z'){e.preventDefault();if(e.shiftKey)$('#redoEdit').click();else $('#undoEdit').click()}else if(e.key.toLowerCase()==='y'){e.preventDefault();$('#redoEdit').click()}else if(e.key.toLowerCase()==='f'){e.preventDefault();$('#scriptSearch').focus();$('#scriptSearch').select()}});
+window.addEventListener('keydown',e=>{if(!$('#playtestModal').hidden){if(e.key==='Escape'){if(!$('#playtestLog').hidden){$('#playtestLog').hidden=true;return}closePlaytest();return}if((e.key==='ArrowRight'||e.key==='Enter'||e.key===' ')&&!e.target?.matches?.('button,input,textarea,select')){e.preventDefault();void playtestRuntime?.next();return}if(e.key==='ArrowLeft'&&!e.target?.matches?.('button,input,textarea,select')){e.preventDefault();void playtestRuntime?.previous();return}}if(e.key==='Escape'&&uiPrefs.layout!=='edit'){setLayoutMode('edit');return}if(e.altKey&&(e.key==='ArrowUp'||e.key==='ArrowDown')){const target=e.target;if(target?.matches?.('input,textarea,select'))return;e.preventDefault();const dir=e.key==='ArrowUp'?-1:1;if(e.shiftKey){if(project?.lines.length&&moveOutlineGroup(project,selectedIndex,'scene',dir)){scheduleSave('Scene 整块移动','outline-reorder');renderAll()}}else moveCurrentSelection(dir);return}const mod=e.ctrlKey||e.metaKey;if(!mod)return;if(['z','y'].includes(e.key.toLowerCase())&&e.target?.closest?.('input,textarea,[contenteditable]:not([contenteditable="false"])'))return;if(e.key.toLowerCase()==='z'){e.preventDefault();if(e.shiftKey)$('#redoEdit').click();else $('#undoEdit').click()}else if(e.key.toLowerCase()==='y'){e.preventDefault();$('#redoEdit').click()}else if(e.key.toLowerCase()==='f'){e.preventDefault();$('#scriptSearch').focus();$('#scriptSearch').select()}});
 async function initRecovery(){
   $('#pastePerformance').disabled=true;$('#pastePerformanceSelected').disabled=true;setPlaybackButtons(false);updateHistoryUi();updateSelectionUi();
   try{recoverySnapshot=await recoveryStore.latest()}catch(error){console.warn('Recovery unavailable',error);recoverySnapshot=null}

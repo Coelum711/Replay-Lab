@@ -191,8 +191,8 @@ test('0.26 character editor exposes optional English phoneme mouths without clut
 });
 
 
-test('0.27 voice workbench explains universal phoneme fallback without adding a new setup step', () => {
-  assert.match(voiceHtml, /语言专用规则 → 通用发音口型 → A\/I\/U\/E\/O → 开\/闭嘴/);
+test('voice workbench starts with finding a role and choosing its voice without another mouth setup step', () => {
+  assert.match(voiceHtml, /先找到角色，再选择语言和声线/);
   assert.doesNotMatch(voiceHtml, /小众语言口型配置/);
 });
 
@@ -251,7 +251,7 @@ test('0.43 stage preview supports direct human manipulation instead of requiring
 
 test('0.37 save location is optional-first and workspace conflicts are recoverable in place', () => {
   assert.match(studioHtml, /保存位置/);
-  assert.match(studioHtml, /可稍后 · 临时工程会自动恢复/);
+  assert.match(studioHtml, /自动备份不包含图片和音频/);
   assert.match(studioHtml, /id="reloadWorkspace"[^>]*hidden/);
   assert.match(studioJs, /isWorkspaceConflictError/);
   assert.match(studioJs, /目录有新版本 · 已暂停保存/);

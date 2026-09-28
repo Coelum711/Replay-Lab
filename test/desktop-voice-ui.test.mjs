@@ -20,4 +20,10 @@ test('full voice page boots without downloading models and connects live project
   const input=w.document.getElementById('speechLanguage');input.value='fr';input.dispatchEvent(new w.Event('change',{bubbles:true}));
   assert.equal(project.settings.speechLanguage,'fr');
   assert.equal(w.document.getElementById('linePreview').textContent.includes('fr'),true);
+  const search=w.document.getElementById('voiceCharacterSearch'),card=w.document.querySelector('.character-card');
+  search.value='nobody';search.dispatchEvent(new w.Event('input'));
+  assert.equal(card.hidden,true);assert.match(w.document.getElementById('voiceCharacterCount').textContent,/没有匹配角色/);
+  w.document.getElementById('clearVoiceCharacterSearch').click();assert.equal(card.hidden,false);
+  search.value='arthur';search.dispatchEvent(new w.Event('input'));assert.equal(card.hidden,false);
+  assert.equal(w.document.querySelector('.character-card'),card,'search keeps the same settings controls and job feedback');
 });

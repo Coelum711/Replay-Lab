@@ -606,10 +606,19 @@ async function batchSynthesizeCharacter(character, progressEl, button, reportEl)
   }
 }
 
+function filterVoiceCharacters(){
+  const query=$('#voiceCharacterSearch').value.trim().toLocaleLowerCase();
+  const cards=[...$('#characters').querySelectorAll('.character-card')];let shown=0;
+  for(const card of cards){card.hidden=!!query&&!card.dataset.characterName.toLocaleLowerCase().includes(query);if(!card.hidden)shown++;}
+  $('#voiceCharacterCount').textContent=cards.length?(shown?`${shown} / ${cards.length} 个角色`:'没有匹配角色，请换个名字或显示全部'):'尚无角色';
+  $('#clearVoiceCharacterSearch').disabled=!query;
+}
+$('#voiceCharacterSearch').addEventListener('input',filterVoiceCharacters);
+$('#clearVoiceCharacterSearch').addEventListener('click',()=>{$('#voiceCharacterSearch').value='';filterVoiceCharacters();});
 function renderCharacters() {
   const host = $('#characters');
   host.innerHTML = '';
-  if (!(project?.characters?.length)) { host.innerHTML = '<div class="voice-empty">先打开工程目录，或在上方导入一份 Log。</div>'; return; }
+  if (!(project?.characters?.length)) { host.innerHTML = '<div class="voice-empty">先打开工程目录，或在上方导入一份 Log。</div>'; filterVoiceCharacters();return; }
   for (const character of project?.characters ?? []) {
     character.speech ??= { defaultLanguage: null, voices: {}, accents: {} };
     character.speech.voices ??= {};
@@ -617,6 +626,7 @@ function renderCharacters() {
 
     const card = document.createElement('div');
     card.className = 'character-card stack';
+    card.dataset.characterName=character.name;
     const head = document.createElement('div');
     head.className = 'character-head';
     head.innerHTML = `<strong>${escapeHtml(character.name)}</strong><span class="muted">语言与声音</span>`;
@@ -1004,6 +1014,7 @@ function renderCharacters() {
     updateDetails();
     syncVoiceControls();
   }
+  filterVoiceCharacters();
 }
 
 function renderLineSelect() {
