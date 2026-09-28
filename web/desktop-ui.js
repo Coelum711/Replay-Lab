@@ -1,6 +1,6 @@
 import {desktopCall,isDesktop} from './desktop-client.js';
 const $=id=>document.getElementById(id),studio=document.body.classList.contains('studio-shell');
-const dialog=$('appSettingsDialog');let opening=false,connected=false;
+const dialog=$('appSettingsDialog');let opening=false,connected=false,recovering=false;
 function active(name){for(const item of ['Home','Editor','Voice'])$('app'+item).setAttribute('aria-current',item===name?'page':'false');}
 function editor(){if(studio){$('studioHome').hidden=true;document.body.classList.remove('home-visible');active('Editor');}else $('returnStudio').click();}
 function home(){if(studio){$('studioHome').hidden=false;document.body.classList.add('home-visible');active('Home');void recents();document.dispatchEvent(new CustomEvent('replaylab:desktop-command',{detail:'home'}));}else $('returnStudio').click();}
@@ -16,9 +16,10 @@ function save(){
 function syncProjectUi(state={}){
   if(!studio)return;
   if('connected' in state)connected=state.connected;
+  if('recovering' in state)recovering=state.recovering;
   const source=$('projectState');$('appSaveState').textContent=source.textContent;$('appSaveState').className=source.className;
   $('appSaveState').title=connected?$('workspaceDetail').textContent:'尚未保存到工程文件夹。自动备份只包含台本和设置，不包含图片、音频。';
-  $('appSave').textContent=connected?($('saveProject').disabled?'查看保存问题':'保存'):'选择保存位置';
+  $('appSave').textContent=connected?($('saveProject').disabled?'查看保存问题':'保存'):(recovering?'重新连接工程目录':'选择保存位置');
   $('homeRecovery').hidden=$('recoveryBar').hidden;$('homeRecoveryText').textContent=$('recoveryText').textContent;
 }
 async function recents(){

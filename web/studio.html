@@ -108,6 +108,10 @@ body.layout-edit .workspace{grid-template-columns:var(--left-panel) 7px minmax(5
       <strong>发现上次未关闭的工程</strong><div id="recoveryText" class="muted"></div>
       <div class="row"><button id="restoreRecovery" class="primary">继续上次编辑</button><button id="discardRecovery">忽略</button></div>
     </div>
+    <div id="recoveredMediaNotice" class="card stack recovery" hidden>
+      <strong>恢复稿已保留，连接目录找回素材</strong><div id="recoveredMediaText" class="muted"></div>
+      <div class="row"><button id="reconnectRecovery" class="primary">重新连接工程目录</button><button id="openDifferentWorkspace">打开其他工程</button></div>
+    </div>
     <details id="importDetails" class="card" data-ui-key="import">
       <summary><strong>导入 / 开始</strong><span class="summary-meta">Log、文件或制作文件夹</span></summary>
       <div class="stack disclosure-body">
