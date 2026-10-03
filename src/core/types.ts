@@ -278,6 +278,14 @@ export interface VoicePreset {
   voiceId?: string;
   rate?: number;
   pitch?: number;
+  /** Stable clone is the stock Voicebox path; experimental-clone-instruct uses an x-vector bridge. */
+  mode?: 'stable-clone' | 'experimental-clone-instruct';
+  /** Acting direction, kept separate from the dialogue text. */
+  instruct?: string;
+  actingPreset?: string;
+  actingStrength?: 'subtle' | 'natural' | 'strong';
+  seed?: number;
+  modelSize?: '0.6B' | '1.7B';
 }
 
 export interface CharacterSpeechProfile {
@@ -294,6 +302,8 @@ export interface CharacterSpeechProfile {
 }
 
 export interface TranslationCache {
+  /** Detection belongs to the cache, never an authored line-language override. */
+  detectedSourceLanguage?: string;
   sourceText: string;
   sourceLanguage: string;
   targetLanguage: string;
@@ -320,14 +330,20 @@ export interface PunctuationPauseTiming {
   colon?: number;
 }
 
+export interface ProsodyPoint { position: number; semitones: number; }
+
 export interface LineSpeechConfig {
+  /** Editing draft only. Applied by explicit fine-tune or reenact actions. */
+  prosodyCurve?: ProsodyPoint[];
+  /** Acting-only override; leaves the inherited character voice/profile live. */
+  acting?: Pick<VoicePreset, 'actingPreset' | 'actingStrength' | 'instruct' | 'seed'>;
   /** Per-line target language. Undefined/null means inherit character/project policy. */
   languageOverride?: string | null;
   /** Per-line pause multiplier. Undefined means inherit character/project settings. */
   pauseScale?: number;
   /** Optional exact punctuation gaps authored for this line, commonly via batch editing. */
   punctuationPauses?: PunctuationPauseTiming | null;
-  /** Optional source-language override or language-detection result. */
+  /** Optional user-authored source-language override. */
   sourceLanguage?: string | null;
   /** Per-line accent override. Undefined means inherit the character language slot. */
   accentOverride?: AccentSelection | null;
@@ -614,6 +630,9 @@ export interface CameraTransform {
   y: number;
   /** 1 = full frame. Values above 1 crop in. */
   zoom: number;
+  /** 2.5D orbit angles in degrees. Omitted/zero preserves the legacy view. */
+  yaw?: number;
+  pitch?: number;
 }
 
 export interface StageTransform {
@@ -900,6 +919,8 @@ export interface ReplaySettings {
   templateId: string;
   /** Language of imported Log text, e.g. zh-CN, en-GB, or 'auto'. */
   logLanguage: string;
+  /** Project-wide spoken/TTS language. Character/line overrides take precedence; 'auto' falls back to Log language. */
+  speechLanguage: string;
   translationProvider?: string;
   ttsProvider?: string;
 }

@@ -957,7 +957,9 @@ export class CanvasStageRenderer {
     if (space === 'world' && line.sceneGraph?.projection === '2.5d') states.sort((a, b) => {
       const nodeA = line.sceneGraph?.nodes?.find(node => node.kind === 'custom-object' && node.objectId === a.objectId);
       const nodeB = line.sceneGraph?.nodes?.find(node => node.kind === 'custom-object' && node.objectId === b.objectId);
-      return (nodeB?.depth ?? 0) - (nodeA?.depth ?? 0);
+      const pa = projectStageTransform({ ...a.transform, depth: a.transform?.depth ?? nodeA?.depth ?? 0 }, '2.5d', line.cameraTransform);
+      const pb = projectStageTransform({ ...b.transform, depth: b.transform?.depth ?? nodeB?.depth ?? 0 }, '2.5d', line.cameraTransform);
+      return (pb.viewDepth ?? pb.depth) - (pa.viewDepth ?? pa.depth);
     });
     for (const state of states) {
       const graphNode = line.sceneGraph?.nodes?.find(node => node.kind === 'custom-object' && node.objectId === state.objectId);
@@ -1370,8 +1372,12 @@ export class CanvasStageRenderer {
 
       const stageEntries = line.stage.map((actor, actorIndex) => ({ actor, actorIndex }));
       if (line.sceneGraph?.projection === '2.5d') stageEntries.sort((a, b) => {
-        const depthA = clamp(Number(a.actor.transform?.depth) || 0, 0, 1);
-        const depthB = clamp(Number(b.actor.transform?.depth) || 0, 0, 1);
+        const depth = (entry: typeof a) => {
+          const rect = stageRect(entry.actor.position, line.stage.length, width, height, entry.actorIndex, line.stage.map(item => item.position));
+          const p = projectStageTransform({ x: rect.cx / width, y: rect.floor / height, scale: 1, ...entry.actor.transform }, '2.5d', framing);
+          return p.viewDepth ?? p.depth;
+        };
+        const depthA = depth(a), depthB = depth(b);
         return depthB - depthA || a.actorIndex - b.actorIndex;
       });
       if (!(line.state.cg && line.state.cgPresentation?.hideCharacters)) for (const { actor, actorIndex } of stageEntries) {

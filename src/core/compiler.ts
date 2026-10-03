@@ -6,6 +6,7 @@ import { normalizePuppetRig } from '../puppet/rig.js';
 import { normalizeFaceFit } from './face.js';
 import { buildDirectorBeats } from './beats.js';
 import { buildSceneGraphSnapshot, mergeSceneGraphPatch, normalizeSceneGraphSettings } from './scene-graph.js';
+import { cleanCameraTransform as sanitizeCameraTransform, DEFAULT_CAMERA_TRANSFORM } from './camera.js';
 
 function characterMap(project: ReplayProject): Map<string, ReplayCharacter> {
   return new Map(project.characters.map(c => [c.id, c]));
@@ -19,7 +20,6 @@ interface AutoStageFrame {
 
 const STAGE_SLOTS: ConcreteStagePosition[] = ['left', 'center', 'right'];
 
-const DEFAULT_CAMERA_TRANSFORM: CameraTransform = { x: 0.5, y: 0.5, zoom: 1 };
 const DEFAULT_CG_PRESENTATION: CgPresentation = { fit: 'contain', hideCharacters: false, hideTextbox: false, motion: 'none', mask: null, duration: 0.6 };
 
 function sanitizeSceneMask(value?: SceneMaskSpec | null): SceneMaskSpec | null {
@@ -51,17 +51,6 @@ function sanitizeCgPresentation(value?: Partial<CgPresentation> | null): CgPrese
     motion: ['slow-push','pan-left','pan-right'].includes(String(value?.motion)) ? value!.motion as CgPresentation['motion'] : 'none',
     mask: sanitizeSceneMask(value?.mask),
     duration: Number.isFinite(Number(value?.duration)) ? Math.max(0.05, Math.min(30, Number(value!.duration))) : 0.6
-  };
-}
-
-function sanitizeCameraTransform(value: CameraTransform): CameraTransform {
-  const finite = (input: number, fallback: number) => Number.isFinite(Number(input)) ? Number(input) : fallback;
-  const zoom = Math.max(1, Math.min(4, finite(value.zoom, 1)));
-  const half = 0.5 / zoom;
-  return {
-    x: Math.max(half, Math.min(1 - half, finite(value.x, 0.5))),
-    y: Math.max(half, Math.min(1 - half, finite(value.y, 0.5))),
-    zoom
   };
 }
 
@@ -427,7 +416,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       sceneGraphState = normalizeSceneGraphSettings(projectSceneGraph);
     }
     currentSceneKey = sceneKey;
-    let cameraPlacementSource: 'auto' | 'manual' | 'inherited' = carriedCameraTransform.zoom !== 1 || carriedCameraTransform.x !== 0.5 || carriedCameraTransform.y !== 0.5 ? 'inherited' : 'auto';
+    let cameraPlacementSource: 'auto' | 'manual' | 'inherited' = carriedCameraTransform.zoom !== 1 || carriedCameraTransform.x !== 0.5 || carriedCameraTransform.y !== 0.5 || !!carriedCameraTransform.yaw || !!carriedCameraTransform.pitch ? 'inherited' : 'auto';
     if (line.cameraTransform === null) {
       carriedCameraTransform = { ...DEFAULT_CAMERA_TRANSFORM };
       cameraPlacementSource = 'manual';
@@ -616,7 +605,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       bubble: line.bubble ? { ...line.bubble, metadata: line.bubble.metadata ? { ...line.bubble.metadata } : undefined } : null,
       dialogueStyleId: line.dialogueStyleId ?? null,
       stageMethod: commandMotion ? { ...commandMotion.spec } : line.stageMethod ? { ...line.stageMethod } : null,
-      sceneGraph: buildSceneGraphSnapshot(project, { state: performanceState, stage: performanceStage, lineType: line.type, diceVisible: !!(line.diceRolls?.length), wheelVisible: !!line.wheel, hitPointVisible: !!line.hitPoint, transition: performanceTransition, sceneGraphSettings: sceneGraphState }),
+      sceneGraph: buildSceneGraphSnapshot(project, { state: performanceState, stage: performanceStage, lineType: line.type, diceVisible: !!(line.diceRolls?.length), wheelVisible: !!line.wheel, hitPointVisible: !!line.hitPoint, transition: performanceTransition, sceneGraphSettings: sceneGraphState, cameraTransform: carriedCameraTransform }),
       directorBeatId: beatByLineId.get(line.id)?.id ?? null,
       audioAssetId: line.audioAssetId,
       sfxAssetId: line.type === 'command' && line.command?.kind === 'sfx' ? line.command.assetId : line.sfxAssetId,

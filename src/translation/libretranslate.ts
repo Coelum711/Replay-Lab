@@ -21,10 +21,11 @@ export class LibreTranslateProvider implements TranslationProvider {
   constructor(options: LibreTranslateOptions = {}) {
     this.endpoint = (options.endpoint ?? 'http://localhost:5000').replace(/\/$/, '');
     this.apiKey = options.apiKey;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
   async translate(request: TranslationRequest): Promise<TranslationResult> {
+    request.signal?.throwIfAborted();
     const body: Record<string, string> = {
       q: request.text,
       source: normalizeLanguage(request.sourceLanguage ?? 'auto'),
@@ -34,6 +35,7 @@ export class LibreTranslateProvider implements TranslationProvider {
     if (this.apiKey) body.api_key = this.apiKey;
 
     const response = await this.fetchImpl(`${this.endpoint}/translate`, {
+      signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000),
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body)

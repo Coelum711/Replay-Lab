@@ -23,7 +23,7 @@ class WaveformPeakCache{
   async stored(key){const db=await this.db();if(!db)return null;return await new Promise(resolve=>{const req=db.transaction('peaks','readonly').objectStore('peaks').get(key);req.onsuccess=()=>resolve(req.result||null);req.onerror=()=>resolve(null)})}
   async store(key,value){const db=await this.db();if(!db)return;try{db.transaction('peaks','readwrite').objectStore('peaks').put(value,key)}catch{}}
   async get(asset,buckets,resolveAsset){
-    if(!asset)return null;const signature=`${asset.id}:${asset.name}:${asset.metadata?.duration||0}:${buckets}`,cached=this.memory.get(signature);if(cached)return cached;
+    if(!asset)return null;const signature=JSON.stringify([asset.id,asset.sourcePath,asset.uri,asset.metadata?.updatedAt,asset.metadata?.contentRevision,asset.metadata?.duration,buckets]),cached=this.memory.get(signature);if(cached)return cached;
     const stored=await this.stored(signature);if(stored?.length){const peaks=stored instanceof Float32Array?stored:new Float32Array(stored);this.memory.set(signature,peaks);return peaks}
     try{
       const source=await resolveAsset(asset.id),bytes=await bytesFromSource(source);if(!bytes)return null;

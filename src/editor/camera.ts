@@ -1,17 +1,6 @@
 import type { CameraTransform, PerformanceLine, ReplayLine } from '../core/types.js';
-
-export const DEFAULT_CAMERA_TRANSFORM: CameraTransform = { x: 0.5, y: 0.5, zoom: 1 };
-
-export function cleanCameraTransform(value: CameraTransform): CameraTransform {
-  const finite = (input: number, fallback: number) => Number.isFinite(Number(input)) ? Number(input) : fallback;
-  const zoom = Math.max(1, Math.min(4, finite(value.zoom, 1)));
-  const half = 0.5 / zoom;
-  return {
-    x: Math.max(half, Math.min(1 - half, finite(value.x, 0.5))),
-    y: Math.max(half, Math.min(1 - half, finite(value.y, 0.5))),
-    zoom
-  };
-}
+import { cleanCameraTransform, DEFAULT_CAMERA_TRANSFORM } from '../core/camera.js';
+export { cleanCameraTransform, DEFAULT_CAMERA_TRANSFORM } from '../core/camera.js';
 
 export function effectiveCameraTransform(line: ReplayLine, performanceLine?: Pick<PerformanceLine, 'cameraTransform'> | null): CameraTransform {
   if (line.cameraTransform && line.cameraTransform !== null) return cleanCameraTransform(line.cameraTransform);

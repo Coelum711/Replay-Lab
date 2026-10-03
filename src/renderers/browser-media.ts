@@ -32,8 +32,9 @@ function audioSettings(performance: PerformanceDocument) {
 
 function voiceIntervals(performance: PerformanceDocument): VoiceInterval[] {
   const out: VoiceInterval[] = [];
+  if(audioSettings(performance).voiceVolume<=0)return out;
   for (const line of performance.lines) {
-    if (!line.audioAssetId) continue;
+    if (!line.audioAssetId || (line.audioMix?.voiceGain ?? 1)<=0) continue;
     const offset = Number(line.audioMix?.voiceOffset) || 0;
     const pre = Math.max(0, Number(line.audioMix?.preRoll) || 0);
     const post = Math.max(0, Number(line.audioMix?.postRoll) || 0);
@@ -53,7 +54,7 @@ export function buildAudioSchedule(performance: PerformanceDocument): AudioSched
       events.push({
         assetId: line.audioAssetId,
         start,
-        volume: mix.voiceVolume * Math.max(0, Number(line.audioMix?.voiceGain) || 1),
+        volume: mix.voiceVolume * Math.max(0, Number(line.audioMix?.voiceGain ?? 1)),
         pan: Math.max(-1, Math.min(1, Number(line.audioMix?.voicePan) || 0)),
         loop: false,
         kind: 'voice',
@@ -63,7 +64,7 @@ export function buildAudioSchedule(performance: PerformanceDocument): AudioSched
     if (line.sfxAssetId) events.push({
       assetId: line.sfxAssetId,
       start: line.start,
-      volume: mix.sfxVolume * Math.max(0, Number(line.audioMix?.sfxGain) || 1),
+      volume: mix.sfxVolume * Math.max(0, Number(line.audioMix?.sfxGain ?? 1)),
       pan: Math.max(-1, Math.min(1, Number(line.audioMix?.sfxPan) || 0)),
       loop: false,
       kind: 'sfx',
@@ -99,42 +100,45 @@ export function buildAudioSchedule(performance: PerformanceDocument): AudioSched
   return events.sort((a, b) => a.start - b.start || (a.kind === 'voice' ? -1 : 1));
 }
 
-function applyEnvelope(gain: AudioParam, event: AudioScheduleEvent, baseTime: number, offset: number, performance: PerformanceDocument): void {
-  const baseVolume = Math.max(0, event.volume);
-  const start = Math.max(event.start, offset);
-  const end = event.end ?? performance.duration;
-  const when = baseTime + Math.max(0, start - offset);
-  const finish = baseTime + Math.max(0, end - offset);
-  const fadeIn = Math.max(0, Number(event.fadeIn) || 0);
-  const fadeOut = Math.max(0, Number(event.fadeOut) || 0);
-  gain.cancelScheduledValues(when);
-  if (fadeIn > 0 && start <= event.start + fadeIn) {
-    const progressed = Math.max(0, Math.min(1, (start - event.start) / fadeIn));
-    gain.setValueAtTime(baseVolume * progressed, when);
-    gain.linearRampToValueAtTime(baseVolume, baseTime + Math.max(0, event.start + fadeIn - offset));
-  } else gain.setValueAtTime(baseVolume, when);
-  if (fadeOut > 0 && event.end !== undefined) {
-    const fadeStart = Math.max(start, event.end - fadeOut);
-    gain.setValueAtTime(baseVolume, baseTime + Math.max(0, fadeStart - offset));
-    gain.linearRampToValueAtTime(0, finish);
+/** One combined envelope prevents ducking automation from overwriting crossfades. */
+export function audioEnvelopePoints(event: AudioScheduleEvent, offset: number, performance: PerformanceDocument): Array<{time:number;value:number}> {
+  const start=Math.max(event.start,offset),end=Math.max(start,event.end??performance.duration);
+  const fadeIn=Math.max(0,event.fadeIn??0),fadeOut=Math.max(0,event.fadeOut??0);
+  const mix=audioSettings(performance),duck=mix.ducking;
+  const attack=Math.max(.01,duck?.attackSeconds??.12),release=Math.max(.01,duck?.releaseSeconds??.35);
+  const voices=duck?.enabled&&(event.kind==='bgm'||event.kind==='ambient')
+    ?voiceIntervals(performance).filter(v=>v.end+release>start&&v.start-attack<end):[];
+  const duckGain=Math.max(0,Math.min(1,event.kind==='bgm'?(duck?.bgmGain??1):(duck?.ambientGain??1)));
+  const clamp=(n:number)=>Math.max(0,Math.min(1,n));
+  const value=(time:number)=>{
+    const fade=(fadeIn?clamp((time-event.start)/fadeIn):1)*(fadeOut&&event.end!==undefined?clamp((end-time)/fadeOut):1);
+    let factor=1;
+    for(const voice of voices){
+      const amount=time<voice.start?clamp((time-voice.start+attack)/attack):time<=voice.end?1:clamp((voice.end+release-time)/release);
+      factor=Math.min(factor,1-(1-duckGain)*amount);
+    }
+    return Math.max(0,event.volume)*fade*factor;
+  };
+  const boundaries=new Set([start,end]);
+  for(const t of [event.start+fadeIn,end-fadeOut,...voices.flatMap(v=>[v.start-attack,v.start,v.end,v.end+release])]){
+    if(t>start&&t<end)boundaries.add(t);
   }
+  const times=[...boundaries].sort((a,b)=>a-b),points=[{time:start,value:value(start)}];
+  const append=(a:number,b:number,depth=0)=>{
+    const mid=(a+b)/2;
+    if(depth<8&&Math.abs(value(mid)-(value(a)+value(b))/2)>.0005){append(a,mid,depth+1);append(mid,b,depth+1);}
+    else points.push({time:b,value:value(b)});
+  };
+  for(let i=1;i<times.length;i++)append(times[i-1]!,times[i]!);
+  return points;
+}
 
-  const mix = audioSettings(performance);
-  if (!mix.ducking?.enabled || (event.kind !== 'bgm' && event.kind !== 'ambient')) return;
-  const duckGain = event.kind === 'bgm' ? mix.ducking.bgmGain : mix.ducking.ambientGain;
-  const attack = Math.max(0.01, Number(mix.ducking.attackSeconds) || 0.12);
-  const release = Math.max(0.01, Number(mix.ducking.releaseSeconds) || 0.35);
-  for (const voice of voiceIntervals(performance)) {
-    if (voice.end <= start || voice.start >= end) continue;
-    const downAt = Math.max(start, voice.start - attack);
-    const voiceAt = Math.max(start, voice.start);
-    const upAt = Math.min(end, voice.end + release);
-    const ducked = baseVolume * Math.max(0, Math.min(1, duckGain));
-    gain.setValueAtTime(baseVolume, baseTime + Math.max(0, downAt - offset));
-    gain.linearRampToValueAtTime(ducked, baseTime + Math.max(0, voiceAt - offset));
-    gain.setValueAtTime(ducked, baseTime + Math.max(0, voice.end - offset));
-    gain.linearRampToValueAtTime(baseVolume, baseTime + Math.max(0, upAt - offset));
-  }
+function applyEnvelope(gain: AudioParam,event: AudioScheduleEvent,baseTime:number,offset:number,performance:PerformanceDocument):void {
+  const points=audioEnvelopePoints(event,offset,performance);
+  const first=points[0]!;
+  gain.cancelScheduledValues(baseTime+first.time-offset);
+  gain.setValueAtTime(first.value,baseTime+first.time-offset);
+  for(const point of points.slice(1))gain.linearRampToValueAtTime(point.value,baseTime+point.time-offset);
 }
 
 async function sourceArrayBuffer(source: BrowserAssetSource): Promise<ArrayBuffer | null> {
@@ -229,6 +233,12 @@ export class BrowserReplayPlayer {
 
   clearAudioCache(): void { this.audioBuffers.clear(); }
 
+  async dispose(): Promise<void> {
+    this.stop();this.clearAudioCache();
+    if(this.audioContext && this.audioContext.state!=='closed')await this.audioContext.close();
+    this.audioContext=null;
+  }
+
   stop(): void {
     this.generation += 1;
     if (this.raf) cancelAnimationFrame(this.raf);
@@ -238,12 +248,14 @@ export class BrowserReplayPlayer {
     this.callbacks.onStop?.();
   }
 
-  private async scheduleAudio(events: AudioScheduleEvent[], offset: number, destination: AudioNode, audible = true): Promise<{ context: AudioContext; base: number }> {
+  private async scheduleAudio(events: AudioScheduleEvent[], offset: number, destination: AudioNode, audible = true, generation = this.generation): Promise<{ context: AudioContext; base: number }> {
     const context = await this.context();
+    if(generation!==this.generation)return {context,base:context.currentTime};
     const prepared: Array<{ event: AudioScheduleEvent; buffer: AudioBuffer }> = [];
     for (const event of events) {
       if (event.end !== undefined && event.end <= offset) continue;
       const buffer = await this.buffer(event.assetId, context);
+      if(generation!==this.generation)return {context,base:context.currentTime};
       if (buffer) prepared.push({ event, buffer });
     }
     const mix = audioSettings(this.performance);
@@ -284,13 +296,16 @@ export class BrowserReplayPlayer {
     this.stop();
     const generation = ++this.generation;
     const context = await this.context();
-    await this.scheduleAudio(buildAudioSchedule(this.performance), fromTime, context.destination, false);
+    if(generation!==this.generation)return;
+    await this.scheduleAudio(buildAudioSchedule(this.performance), fromTime, context.destination, false, generation);
+    if(generation!==this.generation)return;
     const wall = performance.now() / 1000 + 0.08;
     const tick = async (): Promise<void> => {
       if (generation !== this.generation) return;
       const time = fromTime + Math.max(0, performance.now() / 1000 - wall);
       if (time >= this.performance.duration) { this.stop(); return; }
       const located = await this.renderer.renderAt(time);
+      if(generation!==this.generation)return;
       if (located) this.callbacks.onTime?.(time, located.index);
       this.raf = requestAnimationFrame(() => { void tick(); });
     };
@@ -302,14 +317,17 @@ export class BrowserReplayPlayer {
     this.stop();
     const generation = ++this.generation;
     const context = await this.context();
+    if(generation!==this.generation)return;
     const events = buildAudioSchedule(this.performance).filter(event => event.kind === 'bgm' || event.kind === 'ambient' || (event.start >= line.start && event.start < line.end));
-    await this.scheduleAudio(events, line.start, context.destination, false);
+    await this.scheduleAudio(events, line.start, context.destination, false,generation);
+    if(generation!==this.generation)return;
     const wall = performance.now() / 1000 + 0.08;
     const tick = async (): Promise<void> => {
       if (generation !== this.generation) return;
       const local = Math.max(0, performance.now() / 1000 - wall);
       if (local >= line.duration) { this.stop(); await this.renderer.renderLine(index, line.duration); return; }
       await this.renderer.renderLine(index, local);
+      if(generation!==this.generation)return;
       this.callbacks.onTime?.(line.start + local, index);
       this.raf = requestAnimationFrame(() => { void tick(); });
     };
@@ -440,8 +458,8 @@ export class BrowserReplayPlayer {
       decodeContext = await this.context();
     }
 
-    await output.start();
     try {
+      await output.start();
       throwIfAborted();
       const duration = Math.max(0, this.performance.duration);
       const totalFrames = Math.max(1, Math.ceil(duration * fps));
@@ -503,6 +521,8 @@ export class BrowserReplayPlayer {
     } catch (error) {
       try { await output.cancel(); } catch {}
       throw error;
+    } finally {
+      try{audioSource?.close?.();}catch{}try{videoSource.close?.();}catch{}decoded.clear();
     }
   }
 
@@ -510,22 +530,29 @@ export class BrowserReplayPlayer {
     this.stop();
     const fps = options.fps ?? 30;
     const stream = this.renderer.element.captureStream(fps);
+    const tracks=stream.getTracks();let stopRecorder=()=>{};
+    try {
     const context = await this.context();
     const destination = context.createMediaStreamDestination();
+    tracks.push(...destination.stream.getTracks());
     await this.scheduleAudio(buildAudioSchedule(this.performance), 0, destination, false);
     const combined = new MediaStream([...stream.getVideoTracks(), ...destination.stream.getAudioTracks()]);
     const mimeTypes = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
     const mimeType = mimeTypes.find(type => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type));
     if (!mimeType) throw new Error('This browser does not support WebM MediaRecorder export. Use current Chrome/Edge.');
     const recorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: options.videoBitsPerSecond ?? 5_500_000 });
+    stopRecorder=()=>{if(recorder.state!=='inactive')recorder.stop();};
     const chunks: Blob[] = [];
     recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
-    const done = new Promise<void>((resolve, reject) => { recorder.onstop = () => resolve(); recorder.onerror = event => reject(event); });
+    let recorderError:unknown;
+    const done = new Promise<void>((resolve, reject) => { recorder.onstop = () => resolve(); recorder.onerror = event => {recorderError=event;reject(event);}; });
+    void done.catch(()=>{});
     recorder.start(500);
     const wall = performance.now() / 1000 + 0.08;
     await new Promise<void>((resolve, reject) => {
       const frame = async (): Promise<void> => {
         try {
+          if(recorderError)throw recorderError;
           const t = Math.max(0, performance.now() / 1000 - wall);
           if (t >= this.performance.duration) { await this.renderer.renderAt(Math.max(0, this.performance.duration - 0.001)); options.onProgress?.(1); recorder.stop(); resolve(); return; }
           await this.renderer.renderAt(t); options.onProgress?.(this.performance.duration ? t / this.performance.duration : 1);
@@ -536,5 +563,10 @@ export class BrowserReplayPlayer {
     });
     await done;
     return new Blob(chunks, { type: 'video/webm' });
+    } finally {
+      try{stopRecorder();}catch{}
+      for(const track of tracks)track.stop();
+      this.stop();
+    }
   }
 }

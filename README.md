@@ -1,14 +1,26 @@
+# 0.57.0-dev · 角色整理、摄像机视角与施工台
+
+角色名字设最小宽高并可换行，删除 / 合并直接放在角色区；合并补齐导演指令、转盘和图层引用。视角切换放在预览上方；在场人数、角色名单和镜头控制集中在「施工台 → 演出」。批量语音失败原因显示在角色按钮下方，保存失败保留已生成音频供下载。使用方法见 `CAMERA_WORKBENCH_0.57_CN.md`。
+
+# 0.56.0-dev · 单句语调曲线
+
+新增本地音高微调、实验情绪曲线重录、试听候选与采用后保留旧素材。操作说明见 `PROSODY_0.56_CN.md`。
+
+> **桌面测试版：** 包含 Mac 应用、原生文件对话框、最近工程首页、统一导航和设置界面。使用方法与实测限制见 `DESKTOP_README_CN.md`。
+
+> **0.54.3-dev:** 修复语言与声音继承、跨页工程接续、生成结果过期误写、音频保存与播放耦合。完整检查结果与验证范围见 `AUDIT_0.54.3_CN.md`。
+
+> **0.54.2-dev:** 新增独立本机 MLX 克隆情绪桥后端、启动器与能力检查。普通 Voicebox 克隆保留；实验路径需要 MLX 1.7B Base + CustomVoice，尚未完成 Apple Silicon 真机出声验证。先读 `VOICE_BRIDGE_CN.md`。这版纠正了 0.54.1 只有前端字段、没有可执行后端的缺口。
+
 # Replay Lab
 
 Replay Lab is a text-first TRPG replay compiler. It is intended to sit between messy session logs and multiple render/export backends rather than becoming another miniature Premiere timeline.
 
-The current formal codebase is **0.53.2-dev**. The earlier single-file prototype is preserved at `legacy/replay-lab-v0.7.html` and can still be opened directly in a browser.
+The current formal codebase is **0.57.0-dev**. The earlier single-file prototype is preserved at `legacy/replay-lab-v0.7.html` and can still be opened directly in a browser.
 
 **0.53-dev Audio Director:** adds a first-class Ambient channel, semantic Dialogue/Voice/SFX/Ambient/BGM tracks, project Mixer controls, real BGM crossfade, deterministic Voice ducking, per-line Voice/SFX gain and stereo pan, and a shared realtime/offline Master limiter. `Dialogue` and `Voice` remain bound by the existing line id rather than becoming independent editor clips. See `AUDIO_WORKBENCH.md` and `PATCH_NOTES_0.53_DEV.md`.
 
 **0.53.1-dev Simpler Audio UX:** keeps the full Audio Director engine, but the default Workbench now exposes only four practical volume controls plus automatic dialogue ducking and BGM fade. Master/limiter/pan/offset/exact timing are available through the existing `高级工具` switch. See `PATCH_NOTES_0.53.1_DEV.md`.
-
-**0.53.2-dev Voicebox Local Bridge:** adds an optional local TTS provider for [Voicebox](https://github.com/jamiepine/voicebox). Replay Lab does not bundle or install Voicebox or its models. When started through `START_REPLAY_LAB`, the local Python launcher exposes a narrow same-origin `/__voicebox` bridge for health/profile listing, generation status and generated audio. This avoids browser CORS failures from Replay Lab's dynamic local port. The browser adapter also binds `fetch` correctly, fixing `Failed to execute 'fetch' on 'Window': Illegal invocation`.
 
 **0.52-dev Workbench layout:** restructures Studio around a fixed Program Monitor, a resizable bottom Workbench (Performance / Audio / Voice / Animation), and a right Context Inspector (Properties / Check / Publish). Voice waveform peaks are cached in IndexedDB and the selected line can be edited without leaving the main Studio. See `PATCH_NOTES_0.52_DEV.md`.
 

@@ -8,11 +8,55 @@ import {
   suggestCharacterDuplicates,
   planCharacterMerge,
   mergeCharacters,
+  planCharacterRemoval,
+  removeCharacter,
   planFacePackageBindings,
   diagnoseProject,
   reimportScriptPreservingSetup,
   collectScriptCharacterIds
 } from '../dist/index.js';
+
+test('0.57 merge redirects director commands, wheel bindings and graph overrides without dropping line audio', () => {
+  const project=createProject('cleanup'),keep=createCharacter('Arthur'),source=createCharacter('Misread');
+  project.characters.push(keep,source);
+  const line=createLine(project,'Arthur','/enter Misread left','command');
+  line.command={kind:'enter',characterId:source.id,target:'Misread',position:'left'};
+  line.scene={sceneGraph:{nodeOverrides:{[`character:${source.id}`]:null}}};
+  line.wheel={title:'Keep labels',mode:'history',steps:[{title:'roll',options:[{id:'o',label:'Original label',weight:1,characterId:source.id}],resultLabel:'Original label'}]};
+  const spoken=createLine(project,'Misread','Authored words');spoken.audioAssetId='recording';spoken.speech={spokenText:'Authored recording text'};
+  const raw=createLine(project,'Arthur','/expression Misread angry','command');raw.command=null;
+  project.lines.push(line,spoken,raw);
+  project.sceneGraph.nodeOverrides[`character:${source.id}`]={filters:[],zBias:3};
+  const before=structuredClone(project),plan=planCharacterMerge(project,keep.id,source.id);
+  assert.deepEqual(project,before);assert.equal(plan.linesReassigned,1);
+  mergeCharacters(project,keep.id,source.id);
+  assert.equal(line.command.characterId,keep.id);assert.match(line.text,/Arthur/);
+  assert.equal(raw.command.characterId,keep.id);assert.match(raw.text,/Arthur/);
+  assert.equal(line.wheel.steps[0].options[0].characterId,keep.id);assert.equal(line.wheel.steps[0].options[0].label,'Original label');
+  assert.deepEqual(line.scene.sceneGraph.nodeOverrides,{[`character:${keep.id}`]:null});
+  assert.equal(project.sceneGraph.nodeOverrides[`character:${keep.id}`].zBias,3);
+  assert.equal(spoken.audioAssetId,'recording');assert.equal(spoken.text,'Authored words');assert.equal(spoken.speech.spokenText,'Authored recording text');
+  assert.equal(collectScriptCharacterIds(project).has(source.id),false);
+  assert.equal(ensureCharacter(project,'Misread').id,keep.id);
+});
+
+test('0.57 cleanup rejects every script reference before mutation and removes an unused identity while retaining assets',()=>{
+  const project=createProject('delete'),keep=createCharacter('A'),unused=createCharacter('Unused');project.characters.push(keep,unused);
+  project.assets.push({id:'picture',name:'picture',kind:'character',metadata:{characterId:unused.id,original:'keep'}});
+  project.sceneGraph.nodeOverrides[`character:${unused.id}`]={filters:[],zBias:2};
+  const line=createLine(project,'A','hello');project.lines.push(line);
+  const bindings=[()=>{line.speakerId=unused.id},()=>{line.stageIds=[unused.id]},()=>{line.stagePositions={[unused.id]:'left'}},()=>{line.stageTransforms={[unused.id]:null}},()=>{line.scene={enterIds:[unused.id]}},()=>{line.scene={exitIds:[unused.id]}},()=>{line.command={kind:'enter',characterId:unused.id}},()=>{line.type='command';line.text='/enter Unused'},()=>{line.scene={sceneGraph:{nodeOverrides:{[`character:${unused.id}`]:null}}}},()=>{line.wheel={steps:[{options:[{characterId:unused.id}]}]}}];
+  for(const bind of bindings){
+    const pristine=structuredClone(line);bind();const before=structuredClone(project);
+    assert.equal(planCharacterRemoval(project,unused.id).canRemove,false);
+    assert.throws(()=>removeCharacter(project,unused.id),/合并/);assert.deepEqual(project,before);
+    for(const key of Object.keys(line))delete line[key];Object.assign(line,pristine);
+  }
+  assert.equal(planCharacterRemoval(project,unused.id).canRemove,true);removeCharacter(project,unused.id);
+  assert.deepEqual(project.characters.map(c=>c.id),[keep.id]);assert.equal(project.lines.length,1);
+  assert.equal(project.assets.length,1);assert.deepEqual(project.assets[0].metadata,{original:'keep'});
+  assert.deepEqual(project.sceneGraph.nodeOverrides,{});
+});
 
 test('0.34 duplicate suggestions catch normalized names and confirmed aliases but not arbitrary translations', () => {
   const project=createProject('identity');

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {mockWav} from './helpers/wav.mjs';
 import assert from 'node:assert/strict';
 import {
   TextImporter,
@@ -173,6 +174,7 @@ test('compiler inherits scene state and roster events', () => {
   const project = TextImporter.parse(`Arthur: one\nMatthew: two\nArthur: three`);
   const arthur = project.characters.find(c => c.name === 'Arthur');
   const matthew = project.characters.find(c => c.name === 'Matthew');
+  project.settings.speechLanguage = 'fr-FR';
   project.lines[0].scene = { background: 'room.png', enterIds: [arthur.id], camera: 'none', transition: 'fade' };
   project.lines[1].scene = { enterIds: [matthew.id], camera: 'none', transition: 'cut' };
   project.lines[2].scene = { exitIds: [matthew.id], camera: 'focus-speaker', transition: 'cut' };
@@ -287,16 +289,17 @@ test('0.35 pause strength inherits project → character → line', () => {
   assert.equal(resolveSpeechPauseScale(project, line), 2.1);
 });
 
-test('speech language precedence is line > character > log language', () => {
+test('speech language precedence is line > character > project speech language > log language', () => {
   const project = TextImporter.parse(`Arthur: 你好\nMatthew: 你好`);
   project.settings.logLanguage = 'zh-CN';
   const arthur = project.characters.find(c => c.name === 'Arthur');
   const matthew = project.characters.find(c => c.name === 'Matthew');
+  project.settings.speechLanguage = 'fr-FR';
   arthur.speech = { defaultLanguage: 'en-GB', voices: {} };
   matthew.speech = { defaultLanguage: null, voices: {} };
 
   assert.equal(resolveSpeechPolicy(project, project.lines[0]).targetLanguage, 'en-GB');
-  assert.equal(resolveSpeechPolicy(project, project.lines[1]).targetLanguage, 'zh-CN');
+  assert.equal(resolveSpeechPolicy(project, project.lines[1]).targetLanguage, 'fr-FR');
   project.lines[0].speech.languageOverride = 'ja-JP';
   assert.equal(resolveSpeechPolicy(project, project.lines[0]).targetLanguage, 'ja-JP');
 });
@@ -351,14 +354,14 @@ test('translation changes spoken text but never display Log text, and caches by 
 });
 
 
-test('TTS phoneme timing automatically becomes language-aware mouth cues', async () => {
+test('TTS phoneme timing stays on the candidate until adoption', async () => {
   const project=TextImporter.parse('Arthur: bad thought');
   project.settings.logLanguage='en-GB';
   project.settings.ttsProvider='phoneme-tts';
   const tts=new TtsRegistry().register({id:'phoneme-tts',label:'phoneme',async synthesize(){return {audio:new Uint8Array([1]),mime:'audio/mock',phonemes:[{start:0,end:.08,phoneme:'B'},{start:.08,end:.2,phoneme:'AE1'},{start:.2,end:.3,phoneme:'DH'}]}}});
-  await prepareLineSpeech(project,project.lines[0],{tts,synthesize:true});
-  assert.equal(project.lines[0].mouth,'timed');
-  assert.deepEqual(project.lines[0].mouthCues.map(c=>c.viseme),['M','AE','TH']);
+  const prepared=await prepareLineSpeech(project,project.lines[0],{tts,synthesize:true});
+  assert.equal(project.lines[0].mouth,'auto');
+  assert.deepEqual(prepared.mouthCues.map(c=>c.viseme),['M','AE','TH']);
 });
 
 test('character without language slot speaks Log language without translation', async () => {
@@ -384,7 +387,8 @@ test('auto Log language detection becomes a reusable translation cache source la
   await prepareLineSpeech(project, project.lines[0], { translations });
   await prepareLineSpeech(project, project.lines[0], { translations });
   assert.equal(calls, 1);
-  assert.equal(project.lines[0].speech.sourceLanguage, 'zh-CN');
+  assert.equal(project.lines[0].speech.sourceLanguage, null);
+  assert.equal(project.lines[0].speech.translationCache.detectedSourceLanguage, 'zh-CN');
 });
 
 import { prepareProjectSpeech } from '../dist/index.js';
@@ -475,8 +479,63 @@ test('regional-vocabulary accent intent participates in translation cache invali
 import {
   REPLAYLAB_FREE_TTS_ID,
   ReplayLabFreeTtsProvider,
+  VoiceboxLocalTtsProvider,
+  VOICEBOX_LOCAL_TTS_ID,
   createDefaultTtsRegistry
 } from '../dist/index.js';
+
+
+test('0.53.2 old projects inherit Log language into the new project speech language', () => {
+  const project = TextImporter.parse('王耀: 你好');
+  project.settings.logLanguage = 'zh-CN';
+  delete project.settings.speechLanguage;
+  const normalized = normalizeReplayProject(project);
+  assert.equal(normalized.settings.speechLanguage, 'auto');
+  assert.equal(resolveSpeechPolicy(normalized, normalized.lines[0]).targetLanguage, 'zh-CN');
+});
+
+test('0.53.2 Voicebox Local ranks sample-language matches but still exposes cross-language profiles and sends explicit base language', async () => {
+  const calls=[]; let historyPolls=0;
+  const fetchImpl=async (url, init={})=>{
+    calls.push({url:String(url),init});
+    if(String(url).endsWith('/profiles')) return new Response(JSON.stringify([
+      {id:'en-profile',name:'English sample',language:'en'},
+      {id:'zh-profile',name:'中文样本',language:'zh'}
+    ]),{status:200,headers:{'content-type':'application/json'}});
+    if(String(url).endsWith('/generate')) return new Response(JSON.stringify({id:'gen-1',status:'generating'}),{status:200,headers:{'content-type':'application/json'}});
+    if(String(url).endsWith('/history/gen-1')) { historyPolls++; return new Response(JSON.stringify({id:'gen-1',status:'completed',duration:1.25}),{status:200,headers:{'content-type':'application/json'}}); }
+    if(String(url).endsWith('/audio/gen-1')) return new Response(new Uint8Array([1,2,3]),{status:200,headers:{'content-type':'audio/wav'}});
+    if(String(url).endsWith('/health')) return new Response('{}',{status:200,headers:{'content-type':'application/json'}});
+    throw new Error('unexpected '+url);
+  };
+  const provider=new VoiceboxLocalTtsProvider({fetchImpl,pollIntervalMs:0,timeoutMs:1000});
+  assert.equal(provider.id,VOICEBOX_LOCAL_TTS_ID);
+  const voices=await provider.listVoices('zh-CN');
+  assert.deepEqual(voices.map(v=>v.id),['zh-profile','en-profile']);
+  const out=await provider.synthesize({text:'你好',language:'zh-CN',voiceId:'zh-profile'});
+  const body=JSON.parse(calls.find(c=>c.url.endsWith('/generate')).init.body);
+  assert.equal(body.language,'zh');
+  assert.equal(body.profile_id,'zh-profile');
+  assert.equal(out.duration,1.25); assert.equal(out.mime,'audio/wav'); assert.equal(historyPolls,1);
+});
+
+test('experimental clone + instruct verifies the bridge and never posts experimental fields to stock Voicebox', async () => {
+  const calls=[];
+  const fetchImpl=async (url, init={})=>{
+    calls.push({url:String(url),init});
+    if(String(url).endsWith('/health')) return new Response(JSON.stringify({service:'replaylab-mlx-clone-bridge',protocol:1,ready:true,voicebox_url:'http://127.0.0.1:17493',capabilities:{clone_instruct:true,model_sizes:['1.7B']}}));
+    if(String(url).endsWith('/synthesize')) return new Response(mockWav(),{status:200,headers:{'content-type':'audio/wav','X-ReplayLab-Profile':'arthur-clone','X-ReplayLab-Injected':'1','X-ReplayLab-Duration':String(2/24000)}});
+    throw new Error('unexpected '+url);
+  };
+  const provider=new VoiceboxLocalTtsProvider({fetchImpl});
+  await provider.synthesize({text:'Stay back.',language:'en-GB',voiceId:'arthur-clone',instruct:'restrained anger',seed:42,modelSize:'1.7B',experimentalCloneInstruct:true});
+  const body=JSON.parse(calls.find(c=>c.url.endsWith('/synthesize')).init.body);
+  assert.equal(body.profile_id,'arthur-clone');
+  assert.equal(body.instruct,'restrained anger');
+  assert.ok(calls.every(c=>!c.url.endsWith('/generate')));
+  assert.equal(body.seed,42);
+  assert.equal(body.model_size,'1.7B');
+});
 
 test('new projects default to Replay Lab Free TTS', () => {
   const project = TextImporter.parse(`Arthur: hello`);
@@ -577,7 +636,7 @@ test('project workspace persists generated speech as a real voice asset and mani
   };
   const result = await persistGeneratedSpeech(workspace, project, line, prepared);
   assert.ok(result);
-  assert.equal(result.path, generatedVoicePath(character, line, 'audio/wav'));
+  assert.ok(result.path.startsWith(generatedVoicePath(character, line, 'audio/wav').replace('.wav','__')));
   assert.ok(await workspace.exists(result.path));
   assert.ok(await workspace.exists(PROJECT_MANIFEST_PATH));
   assert.equal(line.audioAssetId, result.assetId);

@@ -3,6 +3,7 @@ import type { AccentSynthesisHint } from '../pronunciation/types.js';
 import type { PunctuationPauseTiming } from '../core/types.js';
 
 export interface TtsRequest {
+  signal?: AbortSignal;
   text: string;
   voiceId?: string;
   rate?: number;
@@ -14,6 +15,15 @@ export interface TtsRequest {
   pauseScale?: number;
   /** Exact per-punctuation timing authored in Replay Lab. Providers may ignore it. */
   punctuationPauses?: PunctuationPauseTiming;
+  /** Natural-language acting direction for providers that expose expressive control. */
+  instruct?: string;
+  /** Reproducible candidate generation where supported. */
+  seed?: number;
+  /** Provider-specific engine/model selection. */
+  engine?: string;
+  modelSize?: string;
+  /** Explicit opt-in to an experimental cloned-speaker + instruct bridge. */
+  experimentalCloneInstruct?: boolean;
 }
 
 export interface TtsResult {

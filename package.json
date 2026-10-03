@@ -1,6 +1,6 @@
 {
   "name": "replay-lab",
-  "version": "0.53.2-dev",
+  "version": "0.57.0-dev",
   "private": true,
   "type": "module",
   "license": "GPL-3.0-only",
@@ -8,19 +8,28 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/update-runtime-manifest.mjs",
     "test": "npm run build && node --test test/*.test.mjs",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "test:bridge": "python3 -m unittest discover -s bridge -p 'test_*.py' -v",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "desktop": "electron .",
+    "package:mac": "node scripts/package-desktop.mjs",
+    "test:desktop": "node --test test/desktop*.test.mjs"
   },
   "devDependencies": {
-    "typescript": "^5.8.3"
+    "@electron/packager": "20.3.0",
+    "electron": "44.3.0",
+    "jsdom": "29.0.0",
+    "typescript": "5.8.3"
   },
   "optionalDependencies": {
-    "kokoro-js": "^1.2.1",
     "@tanstack/virtual-core": "^3.17.9",
+    "kokoro-js": "^1.2.1",
     "mediabunny": "^1.56.0"
   },
   "peerDependenciesMeta": {
     "@vnve/core": {
       "optional": true
     }
-  }
+  },
+  "main": "desktop/main.cjs",
+  "productName": "Replay Lab"
 }
