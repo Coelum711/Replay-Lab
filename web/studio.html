@@ -73,20 +73,7 @@ body.layout-edit .workspace{grid-template-columns:var(--left-panel) 7px minmax(5
 </div></main>
 <dialog id="appSettingsDialog" class="settings-dialog"><div class="settings-heading"><h2>语言与声音设置</h2><button id="closeAppSettings" aria-label="关闭设置">×</button></div><div class="settings-body" id="appSettingsBody"><p>设置全剧默认语言和声音服务。留空或 auto 表示跟随台本语言；角色和单句可单独覆盖。跨语言朗读需在“声音与连接”中设置翻译服务，或为台词填写译文。画面字幕保持原文。</p></div><div class="settings-footer"><span>Replay Lab 0.57.0-dev</span><button id="settingsVoice" class="primary">声音与连接 →</button></div></dialog>
 <div id="bootGuard" class="boot-guard" role="alert" aria-live="assertive"><strong>Replay Lab 正在加载…</strong><div class="boot-help">如果这条提示持续存在，说明 Studio 脚本没有成功启动。</div></div>
-<script>
-(()=>{
-  const guard=document.getElementById('bootGuard');
-  let finished=false;
-  const fail=(detail)=>{if(finished)return;document.body.classList.add('boot-blocked');guard.hidden=false;guard.innerHTML=`<strong>Studio 没有成功启动。</strong><div class="boot-help">${detail}</div>`};
-  window.__replayLabMarkBootReady=()=>{finished=true;document.body.classList.remove('boot-blocked');guard.hidden=true};
-  window.__replayLabBootFail=fail;
-  if(location.protocol==='file:') fail('这个版本使用 ES Module，不能直接双击 <code>web/studio.html</code>。请从解压后的根目录运行 <code>START_REPLAY_LAB</code> 启动器，或运行 <code>python3 launch_replay_lab.py</code>。');
-  const timer=setTimeout(()=>{if(!finished)fail('脚本加载超时。若你是直接打开 HTML，请改用根目录启动器；若已经通过本地服务器打开，请查看浏览器控制台中的首个错误。')},2500);
-  window.addEventListener('error',event=>{if(finished)return;const target=event.target;if(target&&target.tagName==='SCRIPT')fail(`脚本加载失败：${target.src||'未知脚本'}`);else if(event.message)fail(`启动异常：${event.message}`)},true);
-  window.addEventListener('unhandledrejection',event=>{if(!finished)fail(`启动异常：${event.reason?.message||event.reason||'未处理的 Promise 错误'}`)});
-  window.addEventListener('beforeunload',()=>clearTimeout(timer),{once:true});
-})();
-</script>
+<script src="./boot-guard.js" data-page="Studio"></script>
 <div class="shell">
 <header class="top">
   <h1>Replay Lab Studio 0.57.0-dev</h1><span class="muted">导入 → 编排 → 预览 → 导出</span><div class="grow"></div>

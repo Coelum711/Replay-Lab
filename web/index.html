@@ -19,7 +19,7 @@
 </header>
 <dialog id="appSettingsDialog" class="settings-dialog"><div class="settings-heading"><h2>语言与声音设置</h2><button id="closeAppSettings" aria-label="关闭设置">×</button></div><div class="settings-body" id="appSettingsBody"><p>设置当前工程的默认朗读方式。角色和单句的自定义设置仍然优先，画面字幕保持原文。</p></div><div class="settings-footer"><span>Replay Lab 0.57.0-dev</span><button id="settingsVoice" class="primary">声音与连接 →</button></div></dialog>
 <div id="bootGuard" class="boot-guard" role="alert" aria-live="assertive">声音页正在加载…</div>
-<script>(()=>{const g=document.getElementById('bootGuard');let ok=false;const fail=m=>{if(ok)return;document.body.classList.add('boot-blocked');g.hidden=false;g.textContent=m};window.__replayLabMarkBootReady=()=>{ok=true;document.body.classList.remove('boot-blocked');g.hidden=true};window.__replayLabBootFail=fail;if(location.protocol==='file:')fail('声音页不能直接用 file:// 打开。请从 Replay Lab 根目录运行 START_REPLAY_LAB 启动器。');setTimeout(()=>{if(!ok)fail('声音页脚本没有成功启动。请使用根目录启动器，或检查浏览器控制台。')},2500);window.addEventListener('error',e=>{if(!ok&&e.message)fail('声音页启动异常：'+e.message)},true)})();</script>
+<script src="./boot-guard.js" data-page="声音页"></script>
 <div class="shell">
   <section id="studioLinkCard" class="card stack" hidden><strong id="studioLinkState"></strong><div class="muted">与 Studio 共用当前工程。语言和声音修改会同步回主窗口，由同一份工程保存。</div><div class="row"><button id="focusStudio" type="button">返回主窗口</button><button id="exportVoiceDraft" type="button">导出工程 JSON 备份</button></div></section>
   <div class="top"><a id="returnStudio" href="./studio.html" target="replaylab-studio">← Replay Studio</a><h1>声音</h1><span class="muted">角色选声 / TTS</span><span class="grow"></span><span id="status" class="muted">先打开工程或导入一段 Log。</span></div>

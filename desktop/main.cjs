@@ -123,7 +123,7 @@ async function start(){
   const menu=[...(process.platform==='darwin'?[{label:'Replay Lab',submenu:[{role:'about'},{type:'separator'},{label:'设置…',accelerator:'CmdOrCtrl+,',click:command('settings')},{type:'separator'},{role:'hide'},{role:'hideOthers'},{role:'unhide'},{type:'separator'},{role:'quit'}]}]:[]),
     {label:'文件',submenu:[{label:'首页',accelerator:'CmdOrCtrl+1',click:command('home')},{label:'新建工程',accelerator:'CmdOrCtrl+N',click:command('new')},{label:'打开工程…',accelerator:'CmdOrCtrl+O',click:command('open')},{label:'保存工程',accelerator:'CmdOrCtrl+S',click:command('save')},{type:'separator'},{role:'close'}]},
     {label:'编辑',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'selectAll'}]},
-    {label:'视图',submenu:[{role:'resetZoom'},{role:'zoomIn'},{role:'zoomOut'},{type:'separator'},{role:'togglefullscreen'}]},
+    {label:'视图',submenu:[{role:'resetZoom'},{role:'zoomIn'},{role:'zoomOut'},{type:'separator'},{role:'togglefullscreen'},{type:'separator'},{label:'启动诊断',role:'toggleDevTools',accelerator:'CmdOrCtrl+Alt+I'}]},
     {label:'窗口',submenu:[{role:'minimize'},{role:'zoom'},{role:'front'}]}];
   Menu.setApplicationMenu(Menu.buildFromTemplate(menu));createMain();
 }

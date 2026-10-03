@@ -25,7 +25,7 @@ test('0.34.1 distribution exposes launchers instead of relying on direct file://
   for (const file of ['../launch_replay_lab.py','../START_REPLAY_LAB.bat','../START_REPLAY_LAB.command','../START_REPLAY_LAB.sh','../OPEN_REPLAY_LAB.html','../START_HERE.txt']) {
     await access(new URL(file, import.meta.url));
   }
-  assert.match(studioHtml, /不能直接双击/);
+  assert.match(await readFile(new URL('../web/boot-guard.js', import.meta.url), 'utf8'), /不能直接双击/);
   assert.match(studioHtml, /id="bootGuard"/);
   assert.match(studioJs, /__replayLabMarkBootReady/);
   assert.match(voiceHtml, /id="bootGuard"/);
