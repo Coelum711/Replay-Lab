@@ -521,12 +521,12 @@ export class CanvasStageRenderer {
     const ctx = this.canvas.getContext('2d');
     if (!ctx) throw new Error('2D canvas is unavailable.');
     this.ctx = ctx;
-    this.performance = options.performance;
+    this.performance = options.performance; this.preloadCharacterImages();
     this.resolveAsset = options.resolveAsset;
   }
 
   setPerformance(performance: PerformanceDocument): void {
-    this.performance = performance;
+    this.performance = performance; this.preloadCharacterImages();
     this.stateStartCache.clear();
     this.clearCustomObjectInteractionOverrides();
   }
@@ -574,6 +574,18 @@ export class CanvasStageRenderer {
       return { objectId: region.objectId, stateId: region.stateId, hotspotId: hotspot?.id ?? null, localX, localY, region };
     }
     return null;
+  }
+
+  /** Loads character art ahead of use so a speaker's first line is not held back by decoding. */
+  private preloadCharacterImages(): void {
+    const refs = new Set<string>();
+    for (const character of this.performance.characters) {
+      if (!character.showOnStage) continue;
+      for (const set of [character.images, ...Object.values(character.expressions ?? {})]) if (set?.idle) refs.add(set.idle);
+    }
+    const queue = [...refs];
+    const worker = async (): Promise<void> => { for (let ref = queue.shift(); ref; ref = queue.shift()) await this.image(ref); };
+    for (let i = 0; i < 3; i += 1) void worker();
   }
 
   clearAssetCache(): void {
