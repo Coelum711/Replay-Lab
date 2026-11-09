@@ -1,5 +1,5 @@
 /** Listening pass after a batch: filter, play through, mark bad takes, regenerate only those. */
-export function createVoiceReview({ root, getProject, audioBlob, isBusy, regenerate, onChanged }) {
+export function createVoiceReview({ root, getProject, audioBlob, isBusy, regenerate, onChanged, listTakes, activateTake }) {
   const $ = selector => root.querySelector(selector);
   let rows = [], playing = null, objectUrl = null, sequence = false, stopRegen = false;
 
@@ -41,8 +41,48 @@ export function createVoiceReview({ root, getProject, audioBlob, isBusy, regener
     redo.addEventListener('change', () => { setRedo(line, redo.checked); summarize(); });
     const cell = content => { const td = document.createElement('td'); td.append(content); return td; };
     const length = `${duration.toFixed(1)} 秒${looksShort(line, duration) ? ' · 偏短' : ''}`;
-    tr.append(cell(play), cell(redo), cell(String(project.lines.indexOf(line) + 1)), cell(speakerName(line)), cell(line.text), cell(line.speech?.textOverride || '（按原文）'), cell(length));
-    return { line, tr };
+    const roll = document.createElement('button'); roll.textContent = '重 roll';
+    roll.addEventListener('click', () => void rollLine(line));
+    const count = listTakes(project, line).length;
+    const versions = document.createElement('button'); versions.textContent = `版本 ${count + 1}`; versions.disabled = !count; versions.dataset.versions = '1';
+    const tools = document.createElement('div'); tools.className = 'row'; tools.append(roll, versions);
+    tr.append(cell(play), cell(redo), cell(String(project.lines.indexOf(line) + 1)), cell(speakerName(line)), cell(line.text), cell(line.speech?.textOverride || '（按原文）'), cell(length), cell(tools));
+    const panel = document.createElement('tr'); panel.hidden = true;
+    versions.addEventListener('click', () => { panel.hidden = !panel.hidden; if (!panel.hidden) renderTakes(line, panel); });
+    return { line, tr, panel };
+  }
+  function renderTakes(line, panel) {
+    const project = getProject(), holder = document.createElement('td'); holder.colSpan = 8;
+    const rowFor = (label, asset, active) => {
+      const row = document.createElement('div'); row.className = 'row';
+      const play = document.createElement('button'); play.textContent = '▶'; play.setAttribute('aria-label', `试听${label}`);
+      play.addEventListener('click', () => { sequence = false; void playAsset(asset, line); });
+      const text = document.createElement('span'); text.textContent = `${label} · ${(Number(asset.metadata?.duration) || 0).toFixed(1)} 秒`;
+      row.append(play, text);
+      if (active) { const mark = document.createElement('small'); mark.className = 'muted'; mark.textContent = '当前使用'; row.append(mark); }
+      else {
+        const use = document.createElement('button'); use.textContent = '设为当前';
+        use.addEventListener('click', () => void chooseTake(line, asset));
+        row.append(use);
+      }
+      return row;
+    };
+    const takes = listTakes(project, line);
+    holder.append(rowFor('当前版本', assetOf(line), true), ...takes.map((take, index) => rowFor(`历史 ${takes.length - index}`, take, false)));
+    panel.replaceChildren(holder);
+  }
+  async function chooseTake(line, take) {
+    if (isBusy()) { state('已有声音任务在运行', 'error'); return; }
+    stop();
+    try { await activateTake(line, take); refresh(); state('已切换当前版本', 'ok'); }
+    catch (error) { state(`切换失败：${error?.message || error}`, 'error'); }
+  }
+  async function rollLine(line) {
+    if (isBusy()) { state('已有声音任务在运行', 'error'); return; }
+    stop();
+    state('重新生成中…', 'busy');
+    try { await regenerate(line); refresh(); state('已生成新版本，旧版本已存档', 'ok'); }
+    catch (error) { state(`生成失败：${error?.message || error}`, 'error'); }
   }
   function summarize() {
     const redo = getProject()?.lines.filter(isRedo).length || 0;
@@ -53,7 +93,7 @@ export function createVoiceReview({ root, getProject, audioBlob, isBusy, regener
     if (!getProject()) { state('请先载入工程', 'error'); return; }
     syncCharacters();
     rows = visibleLines().map(renderRow);
-    $('#vrRows').replaceChildren(...rows.map(row => row.tr));
+    $('#vrRows').replaceChildren(...rows.flatMap(row => [row.tr, row.panel]));
     $('#vrTable').hidden = !rows.length;
     summarize();
     state(`${rows.length} 句`, 'ok');
@@ -64,8 +104,9 @@ export function createVoiceReview({ root, getProject, audioBlob, isBusy, regener
     $('#vrAudio').pause();
     highlight(null);
   }
-  async function playLine(line) {
-    const blob = await audioBlob(assetOf(line));
+  function playLine(line) { return playAsset(assetOf(line), line); }
+  async function playAsset(asset, line) {
+    const blob = await audioBlob(asset);
     if (!blob) { state(`第 ${getProject().lines.indexOf(line) + 1} 行的音频读取失败`, 'error'); return; }
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     objectUrl = URL.createObjectURL(blob);

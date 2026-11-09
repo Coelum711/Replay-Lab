@@ -9,6 +9,7 @@ export interface DirectorCommandParseResult {
 const POSITION_VALUES = new Set<StagePosition>(['auto', 'left', 'center', 'right']);
 const CAMERA_VALUES = new Set(['none', 'push', 'shake', 'focus-speaker']);
 const TRANSITION_VALUES = new Set(['cut', 'fade']);
+const FLASH_COLORS: Record<string, string> = { black: '#000000', white: '#ffffff', red: '#b3121d', 黑: '#000000', 白: '#ffffff', 红: '#b3121d' };
 
 function tokenize(input: string): string[] {
   const out: string[] = [];
@@ -45,7 +46,7 @@ function commandName(raw: string): DirectorCommandKind | null {
     bg: 'background', background: 'background',
     cg: 'cg', object: 'object', obj: 'object', prop: 'object', bgm: 'bgm', music: 'bgm', ambient: 'ambient', ambience: 'ambient', amb: 'ambient', sfx: 'sfx', se: 'sfx', sound: 'sfx',
     camera: 'camera', cam: 'camera', transition: 'transition', trans: 'transition',
-    scene: 'scene', chapter: 'chapter', wait: 'wait', pause: 'wait'
+    scene: 'scene', chapter: 'chapter', wait: 'wait', pause: 'wait', flash: 'flash'
   };
   return aliases[key] ?? null;
 }
@@ -152,6 +153,15 @@ export function parseDirectorCommand(project: ReplayProject, text: string): Dire
     if (!value) return { command: null, error: `/${kind} 需要名称。` };
     return { command: { kind, value } };
   }
+  if (kind === 'flash') {
+    const colorArg = args.find(arg => !/^\d/.test(arg));
+    const value = colorArg ? (FLASH_COLORS[colorArg.toLowerCase()] ?? (/^#[0-9a-f]{3,8}$/i.test(colorArg) ? colorArg : null)) : '#000000';
+    if (!value) return { command: null, error: '/flash 颜色可用：black、white、red 或 #rrggbb，例如 /flash black 0.5。' };
+    const secondsArg = args.find(arg => /^\d/.test(arg));
+    const seconds = secondsArg === undefined ? 0.5 : Number(secondsArg);
+    if (!Number.isFinite(seconds) || seconds <= 0) return { command: null, error: '/flash 需要大于 0 的秒数，例如 /flash black 0.5。' };
+    return { command: { kind, value, duration: seconds } };
+  }
   const duration = Number(args[0]);
   if (!Number.isFinite(duration) || duration < 0) return { command: null, error: '/wait 需要非负秒数，例如 /wait 0.5。' };
   return { command: { kind: 'wait', duration } };
@@ -196,6 +206,7 @@ export function formatDirectorCommand(project: ReplayProject, command: ReplayDir
     case 'scene': return `/scene ${quoteArg(command.value ?? 'Scene')}`;
     case 'chapter': return `/chapter ${quoteArg(command.value ?? 'Chapter')}`;
     case 'wait': return `/wait ${Math.max(0, Number(command.duration) || 0)}`;
+    case 'flash': return `/flash ${command.value ?? '#000000'} ${Math.max(0.01, Number(command.duration) || 0.5)}`;
   }
 }
 

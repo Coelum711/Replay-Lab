@@ -35,7 +35,12 @@ export function resolveSpeechSourceLanguage(project: ReplayProject, line: Replay
 
 export function resolveVoice(character: ReplayCharacter | undefined, targetLanguage: string, line: ReplayLine): VoicePreset {
   const inherited = resolveLanguageSlot(character?.speech?.voices ?? {}, targetLanguage) ?? character?.voice ?? {};
-  return { ...inherited, ...line.speech?.voice, ...line.speech?.acting };
+  const voice: VoicePreset = { ...inherited, ...line.speech?.voice, ...line.speech?.acting };
+  if (voice.mode !== 'auto') return voice;
+  const acting = line.speech?.acting;
+  const expressive = !!(acting?.actingPreset || acting?.instruct?.trim() || line.speech?.persona?.trim());
+  // The bridge only runs the 1.7B pair; plain lines keep whatever size the character chose.
+  return expressive ? { ...voice, mode: 'experimental-clone-instruct', modelSize: '1.7B' } : { ...voice, mode: 'stable-clone' };
 }
 
 export function resolveSpeechPolicy(project: ReplayProject, line: ReplayLine): ResolvedSpeechPolicy {

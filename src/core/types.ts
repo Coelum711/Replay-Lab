@@ -1,5 +1,5 @@
 export type LineType = 'dialogue' | 'dice' | 'hitpoint' | 'wheel' | 'bubble' | 'system' | 'narration' | 'command';
-export type DirectorCommandKind = 'dismiss' | 'enter' | 'move' | 'motion' | 'expression' | 'background' | 'cg' | 'object' | 'bgm' | 'ambient' | 'sfx' | 'camera' | 'transition' | 'scene' | 'chapter' | 'wait';
+export type DirectorCommandKind = 'dismiss' | 'enter' | 'move' | 'motion' | 'expression' | 'background' | 'cg' | 'object' | 'bgm' | 'ambient' | 'sfx' | 'camera' | 'transition' | 'scene' | 'chapter' | 'wait' | 'flash';
 export type DirectorBeatTimingMode = 'parallel' | 'sequence';
 export type LineExpressionMode = 'inherit' | 'set';
 export type CharacterKind = 'normal' | 'npc' | 'kp' | 'system';
@@ -279,7 +279,8 @@ export interface VoicePreset {
   rate?: number;
   pitch?: number;
   /** Stable clone is the stock Voicebox path; experimental-clone-instruct uses an x-vector bridge. */
-  mode?: 'stable-clone' | 'experimental-clone-instruct';
+  /** auto: use the emotion bridge only for lines that carry emotion, tone or line-state directions. */
+  mode?: 'stable-clone' | 'experimental-clone-instruct' | 'auto';
   /** Acting direction, kept separate from the dialogue text. */
   instruct?: string;
   actingPreset?: string;
@@ -289,6 +290,10 @@ export interface VoicePreset {
 }
 
 export interface CharacterSpeechProfile {
+  /** Named extra voices for this character, e.g. an angry take of the same speaker. */
+  voiceVariants?: Array<{ label: string; voiceId: string }>;
+  /** Personality and speech habits sent with every expressive generation of this character. */
+  persona?: string;
   /** Undefined/null means: inherit the project's Log language. */
   defaultLanguage?: string | null;
   /** Multiplier for punctuation/manual speech pauses. Undefined means inherit project settings. */
@@ -333,6 +338,9 @@ export interface PunctuationPauseTiming {
 export interface ProsodyPoint { position: number; semitones: number; }
 
 export interface LineSpeechConfig {
+  /** This line's own side of the character, added to the character persona or replacing it. */
+  persona?: string;
+  personaReplacesCharacter?: boolean;
   /** Editing draft only. Applied by explicit fine-tune or reenact actions. */
   prosodyCurve?: ProsodyPoint[];
   /** Acting-only override; leaves the inherited character voice/profile live. */
@@ -1001,6 +1009,8 @@ export interface PerformanceLine {
   directorBeatId?: string | null;
   audioAssetId?: string | null;
   sfxAssetId?: string | null;
+  /** Full-screen colour flash played over everything while this command line runs. */
+  flash?: { color: string; duration: number } | null;
   audioMix: AudioLineMix;
   /** True when the author fixed this row's length, so its voice must not run past line end. */
   voiceClip?: boolean;

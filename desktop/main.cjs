@@ -114,7 +114,9 @@ async function start(){
     const timeout=setTimeout(()=>controller.abort(),20*60_000);timeout.unref();
     try{
       const headers={};for(const [name,value] of Object.entries(request.headers||{}))if(['content-type','x-replaylab-bridge'].includes(name.toLowerCase()))headers[name]=String(value);
-      const response=await fetch(url,{method,headers,body:method==='POST'?String(request.body||''):undefined,signal:controller.signal,redirect:'error'});
+      let body=method==='POST'?String(request.body||''):undefined;
+      if(method==='POST'&&request.multipart){body=new FormData();for(const part of request.multipart){if(part.bytes)body.append(part.name,new Blob([part.bytes],{type:part.type||'application/octet-stream'}),part.filename||'upload.bin');else body.append(part.name,String(part.value));}}
+      const response=await fetch(url,{method,headers,body,signal:controller.signal,redirect:'error'});
       return {status:response.status,headers:[...response.headers],data:new Uint8Array(await response.arrayBuffer())};
     }finally{clearTimeout(timeout);requests.delete(key);}
   });

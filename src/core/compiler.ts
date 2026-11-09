@@ -548,13 +548,14 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       : resolveCachedSpeech(project, line);
     const pauseExtra = line.type === 'command' ? 0 : speechPauseExtraSeconds(speech.text, resolveSpeechPauseScale(project, line), resolvePunctuationPauseTiming(project, line));
     const commandDuration = line.command?.kind === 'wait' ? Math.max(0, Number(line.command.duration) || 0)
+      : line.command?.kind === 'flash' ? Math.max(0.01, Number(line.command.duration) || 0.5)
       : line.command?.kind === 'motion' ? Math.max(0.01, Number(line.command.duration) || 0.5)
       : line.command?.kind === 'camera' ? Math.max(0.2, line.duration ?? 0.5)
       : line.command?.kind === 'transition' ? Math.max(0.2, line.duration ?? 0.42)
       : 0.04;
     const voiceHold = Math.max(0, Number(line.audioMix?.preRoll) || 0) + Math.max(0, Number(line.audioMix?.postRoll) || 0) + Math.max(0, Number(line.audioMix?.voiceOffset) || 0);
     const duration = line.type === 'command'
-      ? (parallelCommand && line.command?.kind !== 'wait' ? 0 : Math.max(0, line.duration ?? commandDuration))
+      ? (parallelCommand && line.command?.kind !== 'wait' && line.command?.kind !== 'flash' ? 0 : Math.max(0, line.duration ?? commandDuration))
       : Math.max(0.2, line.duration ?? (Number.isFinite(voiceDuration) && voiceDuration > 0 ? voiceDuration + voiceHold : estimateDuration(line.text) + pauseExtra));
     const start = cursor;
     const end = start + duration;
@@ -627,6 +628,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       directorBeatId: beatByLineId.get(line.id)?.id ?? null,
       audioAssetId: line.audioAssetId,
       sfxAssetId: line.type === 'command' && line.command?.kind === 'sfx' ? line.command.assetId : line.sfxAssetId,
+      ...(line.type === 'command' && line.command?.kind === 'flash' ? { flash: { color: line.command.value ?? '#000000', duration: Math.max(0.01, Number(line.command.duration) || 0.5) } } : {}),
       audioMix: { ...(line.audioMix ?? {}) },
       ...(line.type !== 'command' && line.duration != null ? { voiceClip: true } : {}),
       bgmFadeSeconds: line.scene?.bgmFadeSeconds ?? null

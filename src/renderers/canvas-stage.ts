@@ -1574,6 +1574,19 @@ export class CanvasStageRenderer {
       this.ctx.fillStyle = this.performance.settings.bgColor || '#171924'; this.ctx.fillRect(0, 0, width, height); return;
     }
     await this.withEffects(line.sceneGraph?.outputEffects, () => this.renderLineContent(index, localTime), line, localTime);
+    if (line.flash) this.drawFlash(line.flash, localTime);
+  }
+
+  private drawFlash(flash: { color: string; duration: number }, localTime: number): void {
+    const edge = Math.min(0.2, flash.duration * 0.25);
+    const alpha = Math.min(clamp(localTime / edge, 0, 1), clamp((flash.duration - localTime) / edge, 0, 1));
+    if (alpha <= 0) return;
+    const { width, height } = this.canvas;
+    this.ctx.save();
+    this.ctx.globalAlpha = alpha;
+    this.ctx.fillStyle = flash.color;
+    this.ctx.fillRect(0, 0, width, height);
+    this.ctx.restore();
   }
 
   async renderAt(time: number): Promise<{ index: number; localTime: number } | null> {

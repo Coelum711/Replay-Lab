@@ -88,6 +88,7 @@
     "speech/policy.js",
     "speech/prosody.js",
     "speech/service.js",
+    "speech/takes.js",
     "templates/index.js",
     "templates/presets.js",
     "templates/types.js",

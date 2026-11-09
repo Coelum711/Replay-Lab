@@ -28,7 +28,10 @@ import {
   TtsRegistry,
   BrowserFileSystemWorkspace,
   isWorkspaceConflictError,
-  persistGeneratedSpeech
+  persistGeneratedSpeech,
+  archiveActiveTake,
+  activateVoiceTake,
+  listVoiceTakes
 } from '../dist/index.js';
 
 const KOKORO_BROWSER_MODULE = 'https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm';
@@ -115,6 +118,7 @@ async function chooseWorkspace() {
   }
 }
 async function persistPreparedLineAudio(line, prepared) {
+  if (prepared?.ttsResult && !prepared.audioEdit) archiveActiveTake(project, line);
   if (linkedHost && prepared?.ttsResult) {
     const result = await linkedHost.adopt(project, line, prepared);
     if (!result.saved) throw new Error('音频已保留在 Studio 草稿中，但目录保存失败。请在主窗口处理保存提示。');
@@ -728,7 +732,7 @@ function renderCharacters() {
     actingWrap.innerHTML = `<div class="warning-note"><b>实验：克隆声纹 + 情绪指令</b> · 需要启动本机 MLX 情绪桥和准备同尺寸 1.7B Base / CustomVoice。0.6B 不支持本桥的文字情绪。该模式只保证注入指定声纹，生成后的相似度仍需试听。</div>`;
     const actingGrid = document.createElement('div'); actingGrid.className = 'voice-controls';
     const modeLabel = document.createElement('label'); modeLabel.innerHTML = '<span>生成模式</span><small>稳定克隆 / 邪修实验</small>';
-    const modeSelect = document.createElement('select'); modeSelect.innerHTML = '<option value="stable-clone">稳定声音克隆</option><option value="experimental-clone-instruct">实验：克隆 + 情绪</option>'; modeLabel.append(modeSelect);
+    const modeSelect = document.createElement('select'); modeSelect.innerHTML = '<option value="stable-clone">稳定声音克隆</option><option value="experimental-clone-instruct">实验：克隆 + 情绪</option><option value="auto">自动：有情绪标记才用情绪桥</option>'; modeLabel.append(modeSelect);
     const emotionLabel = document.createElement('label'); emotionLabel.innerHTML = '<span>情绪基调</span><small>会组合为独立表演指令</small>';
     const emotionSelect = document.createElement('select'); emotionSelect.innerHTML = '<option value="">中性</option><option value="warm and gentle">温柔</option><option value="restrained anger, low and cold, do not shout">压着火气</option><option value="frightened, breath unsteady, trying to stay quiet">恐惧</option><option value="exhausted, quiet and slightly breathy">疲惫</option><option value="amused, with a slight smile">愉快</option><option value="whisper, intimate and close">耳语</option>'; emotionLabel.append(emotionSelect);
     const strengthLabel = document.createElement('label'); strengthLabel.innerHTML = '<span>情绪强度</span><small>轻 / 自然 / 强</small>';
@@ -1381,7 +1385,16 @@ $('#downloadLineAudio').addEventListener('click', async () => {
   }catch(error){setStatus(`音频下载失败：${error.message||error}`,'error')}finally{button.textContent=oldText;syncCurrentAudioUi()}
 });
 
-createVoiceReview({root:document,getProject:()=>project,audioBlob:asset=>audioBlobForAsset(asset?.id),isBusy:()=>activeVoiceJobs>0,regenerate:line=>synthesizeLine(line),onChanged(){compile();notifyHost();}});
+async function chooseVoiceTake(line,take){
+  const blob=await audioBlobForAsset(take.id);
+  if(!blob)throw new Error('这个版本的音频文件读取失败。');
+  activateVoiceTake(project,line,take.id);
+  const old=generatedAudio.get(line.id);if(old){revokeCacheEntry(old);generatedAudio.delete(line.id);}
+  if(linkedHost){linkedHost.putAudio?.(line.audioAssetId,blob);await linkedHost.changed(project,true);}
+  else if(workspace)await workspace.saveProject(project);
+  compile();syncCurrentAudioUi();
+}
+createVoiceReview({root:document,getProject:()=>project,audioBlob:asset=>audioBlobForAsset(asset?.id),isBusy:()=>activeVoiceJobs>0,regenerate:line=>synthesizeLine(line),onChanged(){compile();notifyHost();},listTakes:listVoiceTakes,activateTake:chooseVoiceTake});
 createTranslationBridge({root:document,getProject:()=>project,fetchImpl:serviceFetch,getEndpoint:()=>$('#voiceboxEndpoint').value.trim()||'http://127.0.0.1:17493',onApplied(speakers){speakers.forEach(invalidateCharacterAudio);$('#speechLanguage').value=project.settings.speechLanguage;renderCharacters();renderLinePreview();compile();}});
 prosodyEditor=createProsodyEditor({
   context(){

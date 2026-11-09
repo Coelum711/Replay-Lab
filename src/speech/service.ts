@@ -127,7 +127,7 @@ export async function prepareLineSpeech(project: ReplayProject, line: ReplayLine
       accent: accentSynthesisHint(policy.accent),
       pauseScale,
       punctuationPauses: resolvePunctuationPauseTiming(project, line),
-      instruct: [policy.voice.actingPreset && `${policy.voice.actingStrength || 'natural'} intensity: ${policy.voice.actingPreset}`, policy.voice.instruct,
+      instruct: [line.speech?.persona?.trim() && line.speech.personaReplacesCharacter ? undefined : project.characters.find(character => character.id === line.speakerId)?.speech?.persona?.trim(), line.speech?.persona?.trim(), policy.voice.actingPreset && `${policy.voice.actingStrength || 'natural'} intensity: ${policy.voice.actingPreset}`, policy.voice.instruct,
         options.prosodyReenactment && prosodyInstruction(options.prosodyReenactment,speechText)].filter(Boolean).join('. ') || undefined,
       seed: policy.voice.seed,
       modelSize: policy.voice.modelSize,

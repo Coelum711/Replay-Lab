@@ -11,7 +11,8 @@ export async function serviceFetch(url,options={}){
   const id=crypto.randomUUID(),api=window.replayDesktop;
   const cancel=()=>api.cancelFetch(id);options.signal?.addEventListener('abort',cancel,{once:true});
   try{
-    const result=await desktopCall('localFetch',{id,url:parsed.href,method:options.method||'GET',headers:Object.fromEntries(new Headers(options.headers)),body:options.body});
+    const multipart=options.body instanceof FormData?await Promise.all([...options.body.entries()].map(async([name,value])=>typeof value==='string'?{name,value}:{name,filename:value.name,type:value.type,bytes:new Uint8Array(await value.arrayBuffer())})):undefined;
+    const result=await desktopCall('localFetch',{id,url:parsed.href,method:options.method||'GET',headers:Object.fromEntries(new Headers(options.headers)),...(multipart?{multipart}:{body:options.body})});
     options.signal?.throwIfAborted();return new Response(result.data,{status:result.status,headers:result.headers});
   }finally{options.signal?.removeEventListener('abort',cancel);}
 }

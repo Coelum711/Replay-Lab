@@ -11,6 +11,7 @@ import { backupBeforeRecovery, isRecoveryWorkspace } from './recovery-workspace.
 import { createExportSession } from './export-session.js';
 import './desktop-client.js';
 import { VirtualScriptList } from './virtual-script-list.js';
+import { renderLineTakePanel } from './line-take-panel.js';
 import { CustomObjectEditorController } from './custom-object-editor-controller.js';
 import { AudioWorkbenchController } from './audio-workbench-controller.js';
 import {
@@ -946,6 +947,7 @@ function directorTemplate(kind){
   if(kind==='sfx')return `/sfx ${quote(firstAsset('sfx')||'SFX素材名')}`;
   if(kind==='camera')return '/camera push';
   if(kind==='wait')return '/wait 0.5';
+  if(kind==='flash')return '/flash black 0.5';
   return '/';
 }
 function insertDirectorCommand(kind){
@@ -983,7 +985,18 @@ function renderBeatInspector(beat){
   for(const button of block.querySelectorAll('[data-beat-add]'))button.onclick=()=>insertDirectorCommandIntoBeat(button.dataset.beatAdd,beat);
 }
 
+function renderInspectorTakes(){
+  const takeHost=$('#lineTakeHost');if(!takeHost)return;takeHost.replaceChildren();const line=currentLine();if(!project||!line||line.type==='command'||selectedBeatId)return;
+  renderLineTakePanel(takeHost,{project,line,workspace,resolveAsset,character:project.characters.find(c=>c.id===line.speakerId),
+    clearAudio(id,blob){if(blob)runtimeFiles.set(id,blob);else runtimeFiles.delete(id);invalidateMediaCaches()},
+    onEdit(label){scheduleSave(label,`${line.id}:voice-edit`)},
+    onChanged(save){if(save){scheduleSave('修改配音版本',`${line.id}:voice-take`);void saveIfConnected()}if(currentLine()===line)renderInspectorTakes()},
+    bgmOptions:patchSelectOptions('bgm','bgm'),
+    setBgm(value){setPatch(line,'bgm',value);scheduleSave('修改 BGM',`${line.id}:bgm`);renderAll()},
+    importBgm(){document.querySelectorAll('#contentTabs [data-view]')[2]?.click();$('#assetKind').value='bgm';$('#assetFiles').click()}});
+}
 function renderInspector(){
+  renderInspectorTakes();
   let beat=currentBeat();if(selectedBeatId&&!beat)selectedBeatId=null;
   const card=$('#inspectorCard'),beatBlock=$('#beatInspectorBlock');
   if(beat){renderBeatInspector(beat);return}
@@ -1031,6 +1044,9 @@ function renderVoiceLineWorkbench(){
   host.querySelectorAll('[data-line-audio]').forEach(el=>el.addEventListener('change',()=>{line.audioMix??={};line.audioMix[el.dataset.lineAudio]=Number(el.value);scheduleSave('修改本句音频',`${line.id}:audio-mix`);renderAll()}));
   host.querySelector('[data-line-audio-action="open"]')?.addEventListener('click',()=>$('#openVoiceWorkbench')?.click());
   host.querySelector('[data-line-audio-action="detach"]')?.addEventListener('click',()=>{line.audioAssetId=null;scheduleSave('解除本句 Voice',`${line.id}:voice-detach`);renderAll()});
+  const openDetail=document.createElement('button');openDetail.className='small';openDetail.textContent='重 roll、版本与提示词 →';openDetail.dataset.openLineDetail='1';
+  openDetail.onclick=()=>{if(!$('#lineTakeHost').offsetParent){$('#layoutMode').value='normal';$('#layoutMode').dispatchEvent(new Event('change'))}document.querySelector('[data-context-tab="properties"]')?.click();requestAnimationFrame(()=>$('#lineTakeHost')?.scrollIntoView({block:'start'}))};
+  host.append(openDetail);
 }
 function setWorkbenchTab(tab){
   const allowed=['performance','audio','voice','animation'];if(!allowed.includes(tab))tab='performance';uiPrefs.workbenchTab=tab;saveUiPrefs();
