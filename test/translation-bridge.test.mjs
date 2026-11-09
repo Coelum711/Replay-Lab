@@ -84,3 +84,30 @@ test('style notes for one character do not leak onto another', async () => {
   assert.equal(styleNotesFor(notes, '安东尼奥', speakers), '安东尼奥说关西腔；语气自然');
   assert.equal(styleNotesFor(notes, '王耀', speakers), '王耀句尾用「ある」；语气自然');
 });
+
+test('voice review filters, marks and regenerates only marked lines', async () => {
+  const html = await readFile(new URL('../web/index.html', import.meta.url), 'utf8');
+  const dom = new JSDOM(html);
+  const { document: doc } = dom.window;
+  Object.assign(globalThis, { document: doc, Option: dom.window.Option });
+  const { createVoiceReview } = await import('../web/voice-review-controller.js');
+  const project = StoryScriptImporter.parse('亚瑟：第一句 ||| 一\n王耀：第二句 ||| 二', { title: 't' });
+  project.assets = project.lines.map((line, i) => ({ id: `a${i}`, kind: 'voice', name: 'x', metadata: { duration: 1 + i } }));
+  project.lines.forEach((line, i) => { line.audioAssetId = `a${i}`; });
+  const redone = [];
+  createVoiceReview({ root: doc, getProject: () => project, audioBlob: async () => new Blob(['x']), isBusy: () => false, regenerate: async line => { redone.push(line.text); }, onChanged() {} });
+  const $ = s => doc.querySelector(s);
+  $('#vrRefresh').click();
+  assert.equal(doc.querySelectorAll('#vrRows tr').length, 2);
+  assert.equal($('#vrRegen').disabled, true);
+  const box = doc.querySelectorAll('#vrRows input[type=checkbox]')[1];
+  box.checked = true; box.dispatchEvent(new dom.window.Event('change'));
+  assert.equal(project.lines[1].metadata.voiceReview, 'redo');
+  assert.match($('#vrRegen').textContent, /1 句/);
+  $('#vrFilter').value = 'redo'; $('#vrFilter').dispatchEvent(new dom.window.Event('change'));
+  assert.equal(doc.querySelectorAll('#vrRows tr').length, 1);
+  $('#vrRegen').click();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(redone, ['第二句']);
+  assert.equal(project.lines[1].metadata.voiceReview, undefined);
+});

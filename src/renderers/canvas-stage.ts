@@ -1353,6 +1353,27 @@ export class CanvasStageRenderer {
     shown.forEach((value, index) => this.ctx.fillText(value, x, y + index * lineHeight));
   }
 
+  private drawSceneBanner(line: PerformanceLine, localTime: number): void {
+    if (!line.sceneTitle) return;
+    const alpha = Math.min(clamp(localTime / 0.25, 0, 1), clamp((2.9 - localTime) / 0.5, 0, 1));
+    if (alpha <= 0) return;
+    const { width, height } = this.canvas;
+    const size = Math.round(Math.max(20, width * 0.02)), x = width * 0.045, y = height * 0.06;
+    this.ctx.save();
+    this.ctx.globalAlpha = alpha;
+    this.ctx.font = `700 ${size}px system-ui`;
+    this.ctx.textAlign = 'left'; this.ctx.textBaseline = 'middle';
+    const textWidth = this.ctx.measureText(line.sceneTitle).width, h = size * 2.1;
+    this.ctx.fillStyle = 'rgba(8,10,15,.74)'; roundRect(this.ctx, x, y, textWidth + size * 2.2, h, h / 2); this.ctx.fill();
+    this.ctx.fillStyle = '#f2f4fa'; this.ctx.fillText(line.sceneTitle, x + size * 1.1, y + h / 2);
+    this.ctx.restore();
+  }
+
+  private async drawDialogueAndBanner(line: PerformanceLine, progress: number, localTime: number): Promise<void> {
+    await this.drawDialogue(line, progress, localTime);
+    this.drawSceneBanner(line, localTime);
+  }
+
   private async drawDialogue(line: PerformanceLine, progress: number, localTime: number): Promise<void> {
     if (line.type === 'command') return;
     const displayText = revealText(line, localTime);
@@ -1490,7 +1511,6 @@ export class CanvasStageRenderer {
             const { dw, dh, x, y } = geometry;
             this.ctx.shadowColor = isCurrent ? 'rgba(0,0,0,.42)' : 'rgba(0,0,0,.24)'; this.ctx.shadowBlur = isCurrent ? 28 : 18;
             this.ctx.drawImage(image, x, y, dw, dh);
-            if (isCurrent) { this.ctx.strokeStyle = `${character.color || '#fff'}55`; this.ctx.lineWidth = 3; roundRect(this.ctx, x - 8, y - 8, dw + 16, dh + 16, 18); this.ctx.stroke(); }
           } else if (!layeredDrawn) this.drawPlaceholderActor(character, rect, viseme, blinking, isCurrent);
           this.ctx.restore();
           if (this.performance.settings.showNameTags) {
@@ -1514,7 +1534,7 @@ export class CanvasStageRenderer {
         : line.type === 'hitpoint' ? ['system:hitpoint','screen.presentation'] as const
         : ['ui:dialogue','screen.dialogue'] as const;
       const uiFx = this.nodeEffects(line, presentationType[0], presentationType[1]);
-      await this.withEffects(uiFx.effects, () => this.drawDialogue(line, progress, localTime), line, localTime, uiFx.ambient);
+      await this.withEffects(uiFx.effects, () => this.drawDialogueAndBanner(line, progress, localTime), line, localTime, uiFx.ambient);
     }
     if (line.transition === 'fade' && localTime < 0.42) {
       const transitionFx = this.nodeEffects(line, 'fx:transition', 'screen.fx');

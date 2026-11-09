@@ -115,7 +115,14 @@
     <label>角色口吻与称呼<textarea id="tbStyle" rows="3" placeholder="例如：安东尼奥说关西腔；王耀句尾用「ある」；亚瑟自称「俺」。"></textarea></label>
     <div id="tbLocalControls" class="row"><button id="tbRunLocal" class="primary">翻译未填写的句子</button><button id="tbStop" disabled>停止</button><small class="muted">需要 Voicebox 开着。本地模型只能出草稿，请逐句审阅。</small></div>
     <div id="tbPasteControls" class="stack" hidden><div class="row"><select id="tbBatch" aria-label="翻译批次"></select><button id="tbCopy" class="primary">复制这批的提示词</button></div><textarea id="tbPrompt" rows="3" readonly aria-label="提示词" placeholder="点上面的按钮生成提示词"></textarea><label>粘贴 AI 的回复<textarea id="tbReply" rows="4" placeholder="#12｜译文"></textarea></label><div class="row"><button id="tbImport">导入这批译文</button></div></div>
-    <div id="tbTable" class="stack" hidden><div class="row"><button id="tbApply" class="primary">采用勾选的译文</button></div><table style="width:100%"><thead><tr><th>采用</th><th>行</th><th>台词</th><th>朗读文本</th></tr></thead><tbody id="tbRows"></tbody></table></div>
+    <div id="tbTable" class="stack" hidden><div class="row"><button id="tbApply" class="primary">采用勾选的译文</button></div><table style="width:100%;table-layout:fixed"><thead><tr><th style="width:44px">采用</th><th style="width:44px">行</th><th>台词</th><th>朗读文本</th></tr></thead><tbody id="tbRows"></tbody></table></div>
+  </div></details>
+  <details class="card" id="voiceReview"><summary>审听台 · 连续试听、标记、只重录有问题的句子</summary><div class="stack disclosure">
+    <div class="row"><label>角色<select id="vrCharacter"><option value="">全部角色</option></select></label><label>显示<select id="vrFilter"><option value="all">全部已配音</option><option value="redo">只看待重录</option><option value="short">只看偏短</option></select></label><button id="vrRefresh">刷新列表</button><span id="vrState" class="speech-status">未载入</span></div>
+    <div class="row"><button id="vrPlayAll" class="primary">从头连续试听</button><button id="vrStop">停止</button><button id="vrRegen" disabled>重录已标记的句子</button><button id="vrStopRegen" disabled>停止重录</button></div>
+    <audio id="vrAudio" class="audio-player" controls></audio>
+    <div id="vrTable" hidden><table style="width:100%;table-layout:fixed"><thead><tr><th style="width:44px">播放</th><th style="width:44px">重录</th><th style="width:48px">行</th><th style="width:96px">角色</th><th>台词</th><th>朗读文本</th><th style="width:90px">时长</th></tr></thead><tbody id="vrRows"></tbody></table></div>
+    <small class="muted">重录需要 Voicebox 和情绪桥开着。标记会随工程保存。</small>
   </div></details>
   <details class="card"><summary>调试：Performance JSON</summary><pre id="output" class="disclosure"></pre></details>
   <datalist id="languageOptions"><option value="en-GB"><option value="en-US"><option value="en-IN"><option value="en-AU"><option value="en-CA"><option value="fr-FR"><option value="de-DE"><option value="ja-JP"><option value="zh-CN"></datalist>

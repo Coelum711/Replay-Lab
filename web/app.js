@@ -2,6 +2,7 @@ import { WorkerReplayLabFreeTtsProvider } from './worker-tts-provider.js';
 import {serviceFetch} from './desktop-client.js';
 import {createProsodyEditor} from './prosody-editor.js';
 import {createTranslationBridge} from './translation-bridge-controller.js';
+import {createVoiceReview} from './voice-review-controller.js';
 import {
   createDefaultImporterRegistry,
   compilePerformance,
@@ -1338,7 +1339,8 @@ async function audioBlobForAsset(id) {
   if(!asset)return null;
   if(linkedHost){
     const source=await linkedHost.readAudio(asset.id);
-    if(source instanceof Blob)return source;
+    // Blobs from the Studio window belong to another realm, so instanceof cannot recognise them.
+    if(source&&typeof source.arrayBuffer==='function')return new Blob([await source.arrayBuffer()],{type:source.type});
     if(typeof source==='string'){const response=await fetch(source);if(response.ok)return await response.blob();}
   }
   if (workspace && asset.sourcePath) {
@@ -1379,6 +1381,7 @@ $('#downloadLineAudio').addEventListener('click', async () => {
   }catch(error){setStatus(`音频下载失败：${error.message||error}`,'error')}finally{button.textContent=oldText;syncCurrentAudioUi()}
 });
 
+createVoiceReview({root:document,getProject:()=>project,audioBlob:asset=>audioBlobForAsset(asset?.id),isBusy:()=>activeVoiceJobs>0,regenerate:line=>synthesizeLine(line),onChanged(){compile();notifyHost();}});
 createTranslationBridge({root:document,getProject:()=>project,fetchImpl:serviceFetch,getEndpoint:()=>$('#voiceboxEndpoint').value.trim()||'http://127.0.0.1:17493',onApplied(speakers){speakers.forEach(invalidateCharacterAudio);$('#speechLanguage').value=project.settings.speechLanguage;renderCharacters();renderLinePreview();compile();}});
 prosodyEditor=createProsodyEditor({
   context(){
