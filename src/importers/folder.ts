@@ -3,6 +3,7 @@ import { createProject } from '../core/project.js';
 import type { MediaAsset, ReplayProject } from '../core/types.js';
 import type { ImporterRegistry } from './registry.js';
 import type { VirtualFile } from './types.js';
+import { remapLineCharacters } from '../editor/script-reimport.js';
 import { looksLikeRplGenMediaDef, parseRplGenMediaDef } from './rplgen-mediadef.js';
 
 const LOG_EXT = new Set(['.txt','.log','.html','.htm','.json','.rgl']);
@@ -20,13 +21,18 @@ function naturalCompare(a: string, b: string): number {
 
 function classifyAsset(path: string): MediaAsset['kind'] {
   const p = path.toLowerCase();
-  if (/\b(backgrounds?|bg)\b/.test(p)) return 'background';
-  if (/\bcg\b/.test(p)) return 'cg';
-  if (/\bbgm\b/.test(p)) return 'bgm';
-  if (/\bambient|ambience|amb\b|environment|环境声|氛围声/.test(p)) return 'ambient';
-  if (/\bsfx|se\b/.test(p)) return 'sfx';
-  if (/\bvoice|voices|vo\b/.test(p)) return 'voice';
-  if (/\bcharacters?|tachie|立绘|立ち絵\b/.test(p)) return 'character';
+  const tokens = new Set(p.split(/[\/\\_\-.\s]+/));
+  const has = (words: string[], cjk: string[] = []) => words.some(word => tokens.has(word)) || cjk.some(word => p.includes(word));
+  if (AUDIO_EXT.has(extension(p))) {
+    if (has(['bgm', 'music'], ['背景音乐', '音乐'])) return 'bgm';
+    if (has(['ambient', 'ambience', 'amb', 'environment'], ['环境声', '氛围声', '环境音'])) return 'ambient';
+    if (has(['sfx', 'se', 'sound', 'sounds'], ['音效'])) return 'sfx';
+    if (has(['voice', 'voices', 'vo'], ['语音', '配音', '台词'])) return 'voice';
+    return 'other';
+  }
+  if (has(['background', 'backgrounds', 'bg', 'bgs'], ['背景'])) return 'background';
+  if (has(['cg', 'cgs'])) return 'cg';
+  if (has(['character', 'characters', 'chara', 'tachie', 'sprite', 'sprites'], ['立绘', '立ち絵', '角色'])) return 'character';
   return 'other';
 }
 
@@ -43,6 +49,7 @@ export async function importVirtualFolder(files: VirtualFile[], registry: Import
 
   for (const file of sorted) {
     const ext = extension(file.relativePath);
+    if (file.relativePath.split('/').pop() === 'project.replaylab.json') { ignored.push(file.relativePath); continue; }
     if (LOG_EXT.has(ext)) {
       const text = await file.text();
       if (looksLikeRplGenMediaDef(text)) {
@@ -62,7 +69,7 @@ export async function importVirtualFolder(files: VirtualFile[], registry: Import
         idMap.set(character.id, target.id);
       }
       for (const line of partial.lines) {
-        project.lines.push({ ...line, id: makeId('line'), speakerId: idMap.get(line.speakerId) ?? line.speakerId });
+        project.lines.push({ ...remapLineCharacters(line, idMap), id: makeId('line') });
       }
       const existingDefs = new Set((project.mediaDefinitions ?? []).map(def => def.id));
       for (const def of partial.mediaDefinitions ?? []) if (!existingDefs.has(def.id)) { project.mediaDefinitions.push(structuredClone(def)); existingDefs.add(def.id); }

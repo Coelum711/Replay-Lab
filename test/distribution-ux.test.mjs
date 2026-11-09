@@ -10,13 +10,14 @@ const workerTtsJs = await readFile(new URL('../web/worker-tts-provider.js', impo
 const kokoroWorkerJs = await readFile(new URL('../web/kokoro-worker.js', import.meta.url), 'utf8');
 const prosodyUiJs = await readFile(new URL('../web/prosody-editor.js', import.meta.url), 'utf8');
 const desktopUiJs = await readFile(new URL('../web/desktop-ui.js', import.meta.url), 'utf8');
+const translationBridgeJs = await readFile(new URL('../web/translation-bridge-controller.js', import.meta.url), 'utf8');
 
 function buttonIds(html) {
   return [...html.matchAll(/<button\b[^>]*\bid="([^"]+)"/g)].map(match => match[1]);
 }
 
 function assertButtonsReferenced(html, js, label) {
-  js+=desktopUiJs+prosodyUiJs;
+  js+=desktopUiJs+prosodyUiJs+translationBridgeJs;
   const missing = buttonIds(html).filter(id => !js.includes(`#${id}`) && !js.includes(`getElementById('${id}')`) && !js.includes(`getElementById("${id}")`) && !js.includes(`$('${id}')`));
   assert.deepEqual(missing, [], `${label} static buttons must have binding evidence`);
 }

@@ -58,7 +58,8 @@ export function buildAudioSchedule(performance: PerformanceDocument): AudioSched
         pan: Math.max(-1, Math.min(1, Number(line.audioMix?.voicePan) || 0)),
         loop: false,
         kind: 'voice',
-        lineId: line.lineId
+        lineId: line.lineId,
+        ...(line.voiceClip ? { end: line.end, fadeOut: 0.04 } : {})
       });
     }
     if (line.sfxAssetId) events.push({
@@ -202,6 +203,8 @@ export class BrowserReplayPlayer {
   private audioContext: AudioContext | null = null;
   private audioBuffers = new Map<string, Promise<AudioBuffer | null>>();
   private scheduled: ScheduledSource[] = [];
+  private heldBeds = new Map<string, { source: AudioBufferSourceNode; gain: GainNode; base: number }>();
+  private lineFinished: (() => void) | null = null;
   private raf = 0;
   private generation = 0;
   private callbacks: ReplayPlayerCallbacks;
@@ -225,7 +228,7 @@ export class BrowserReplayPlayer {
         const bytes = await sourceArrayBuffer(await this.resolveAsset(assetId));
         if (!bytes) return null;
         return await context.decodeAudioData(bytes.slice(0));
-      })().catch(() => null);
+      })().catch(() => { this.audioBuffers.delete(assetId); return null; });
       this.audioBuffers.set(assetId, promise);
     }
     return promise;
@@ -240,12 +243,61 @@ export class BrowserReplayPlayer {
   }
 
   stop(): void {
+    this.stopLine();
+    for (const bed of this.heldBeds.values()) { try { bed.source.stop(); } catch {} }
+    this.heldBeds.clear();
+  }
+
+  /** Stops the current line's voice/SFX and animation; beds held for VN reading keep playing. */
+  stopLine(): void {
     this.generation += 1;
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
     for (const item of this.scheduled) { try { item.source.stop(); } catch {} }
     this.scheduled = [];
     this.callbacks.onStop?.();
+    const finished = this.lineFinished;
+    this.lineFinished = null;
+    finished?.();
+  }
+
+  /** Keeps BGM/ambient continuous across reader-paced VN lines: only a changed track is restarted. */
+  private async syncHeldBeds(line: PerformanceDocument['lines'][number], context: AudioContext, generation: number): Promise<void> {
+    const mix = audioSettings(this.performance), master = Math.max(0, Number(mix.masterVolume) || 0);
+    const ducked = Boolean(line.audioAssetId && mix.ducking?.enabled);
+    const wanted = new Map<string, { assetId: string; base: number; gain: number }>();
+    if (line.state.bgm) wanted.set(`bgm:${line.state.bgm}`, { assetId: line.state.bgm, base: mix.bgmVolume * master, gain: ducked ? mix.ducking.bgmGain : 1 });
+    if (line.state.ambient) wanted.set(`ambient:${line.state.ambient}`, { assetId: line.state.ambient, base: mix.ambientVolume * master, gain: ducked ? mix.ducking.ambientGain : 1 });
+    const fade = Math.max(0.05, Number(mix.bgmCrossfadeSeconds) || 0);
+    const now = context.currentTime;
+    for (const [key, bed] of this.heldBeds) {
+      if (wanted.has(key)) continue;
+      bed.gain.gain.cancelScheduledValues(now);
+      bed.gain.gain.setTargetAtTime(0, now, fade / 3);
+      try { bed.source.stop(now + fade); } catch {}
+      this.heldBeds.delete(key);
+    }
+    for (const [key, target] of wanted) {
+      let bed = this.heldBeds.get(key);
+      if (!bed) {
+        const buffer = await this.buffer(target.assetId, context);
+        if (generation !== this.generation) return;
+        if (!buffer) continue;
+        const source = context.createBufferSource(), gain = context.createGain();
+        source.buffer = buffer; source.loop = true; gain.gain.value = 0;
+        source.connect(gain).connect(context.destination);
+        source.start();
+        bed = { source, gain, base: target.base };
+        this.heldBeds.set(key, bed);
+      }
+      bed.gain.gain.setTargetAtTime(Math.max(0, target.base * target.gain), context.currentTime, 0.12);
+    }
+  }
+
+  private releaseHeldBedDucking(): void {
+    const context = this.audioContext;
+    if (!context) return;
+    for (const bed of this.heldBeds.values()) bed.gain.gain.setTargetAtTime(Math.max(0, bed.base), context.currentTime, 0.3);
   }
 
   private async scheduleAudio(events: AudioScheduleEvent[], offset: number, destination: AudioNode, audible = true, generation = this.generation): Promise<{ context: AudioContext; base: number }> {
@@ -312,26 +364,42 @@ export class BrowserReplayPlayer {
     this.raf = requestAnimationFrame(() => { void tick(); });
   }
 
-  async playLine(index: number): Promise<void> {
+  /** Resolves once the line is started. `holdBeds` is the VN mode: BGM/ambient outlive the line. */
+  async playLine(index: number, options: { holdBeds?: boolean } = {}): Promise<void> {
     const line = this.performance.lines[index]; if (!line) return;
-    this.stop();
+    const holdBeds = Boolean(options.holdBeds);
+    if (holdBeds) this.stopLine(); else this.stop();
     const generation = ++this.generation;
     const context = await this.context();
     if(generation!==this.generation)return;
-    const events = buildAudioSchedule(this.performance).filter(event => event.kind === 'bgm' || event.kind === 'ambient' || (event.start >= line.start && event.start < line.end));
+    if(holdBeds){await this.syncHeldBeds(line,context,generation);if(generation!==this.generation)return;}
+    const events = buildAudioSchedule(this.performance).filter(event => event.kind === 'bgm' || event.kind === 'ambient' ? !holdBeds : (event.start >= line.start && event.start < line.end));
     await this.scheduleAudio(events, line.start, context.destination, false,generation);
     if(generation!==this.generation)return;
     const wall = performance.now() / 1000 + 0.08;
     const tick = async (): Promise<void> => {
       if (generation !== this.generation) return;
       const local = Math.max(0, performance.now() / 1000 - wall);
-      if (local >= line.duration) { this.stop(); await this.renderer.renderLine(index, line.duration); return; }
+      if (local >= line.duration) {
+        if (holdBeds) { this.stopLine(); this.releaseHeldBedDucking(); } else this.stop();
+        await this.renderer.renderLine(index, line.duration);
+        return;
+      }
       await this.renderer.renderLine(index, local);
       if(generation!==this.generation)return;
       this.callbacks.onTime?.(line.start + local, index);
       this.raf = requestAnimationFrame(() => { void tick(); });
     };
     this.raf = requestAnimationFrame(() => { void tick(); });
+  }
+
+  /** Like playLine, but resolves when the line has finished or was stopped. */
+  async playLineUntilEnd(index: number, options: { holdBeds?: boolean } = {}): Promise<void> {
+    if (!this.performance.lines[index]) return;
+    const started = this.playLine(index, options);
+    const finished = new Promise<void>(resolve => { this.lineFinished = resolve; });
+    await started;
+    await finished;
   }
 
   private async decodeAudioAsset(assetId: string, context: AudioContext): Promise<AudioBuffer | null> {
@@ -352,8 +420,14 @@ export class BrowserReplayPlayer {
     sampleRate = 48_000
   ): Promise<AudioBuffer> {
     const frameCount = Math.max(1, Math.ceil(chunkDuration * sampleRate));
-    const offline = new OfflineAudioContext(2, frameCount, sampleRate);
     const mix = audioSettings(this.performance);
+    // A fresh limiter outputs ~6 ms of silence and has no gain history. Render a little earlier and
+    // discard that part so chunks join without a gap.
+    const latencyFrames = mix.limiter?.enabled ? Math.round(0.006 * sampleRate) : 0;
+    const leadFrames = mix.limiter?.enabled ? Math.round(Math.min(chunkStart, 0.1) * sampleRate) : 0;
+    const renderStart = chunkStart - leadFrames / sampleRate;
+    const totalFrames = leadFrames + frameCount + latencyFrames;
+    const offline = new OfflineAudioContext(2, totalFrames, sampleRate);
     const master = offline.createGain();
     master.gain.value = Math.max(0, Number(mix.masterVolume) || 0);
     let tail: AudioNode = master;
@@ -364,12 +438,12 @@ export class BrowserReplayPlayer {
       tail.connect(limiter); tail = limiter;
     }
     tail.connect(offline.destination);
-    const chunkEnd = chunkStart + chunkDuration;
+    const chunkEnd = renderStart + totalFrames / sampleRate;
     for (const event of events) {
       const buffer = buffers.get(event.assetId);
       if (!buffer || buffer.duration <= 0) continue;
       const naturalEnd = event.loop ? (event.end ?? this.performance.duration) : Math.min(event.end ?? Infinity, event.start + buffer.duration);
-      const overlapStart = Math.max(chunkStart, event.start);
+      const overlapStart = Math.max(renderStart, event.start);
       const overlapEnd = Math.min(chunkEnd, naturalEnd);
       if (overlapEnd <= overlapStart) continue;
       const source = offline.createBufferSource();
@@ -379,13 +453,18 @@ export class BrowserReplayPlayer {
       source.loop = event.loop;
       panner.pan.value = Math.max(-1, Math.min(1, Number(event.pan) || 0));
       source.connect(gain).connect(panner).connect(master);
-      applyEnvelope(gain.gain, event, 0, chunkStart, this.performance);
+      applyEnvelope(gain.gain, event, 0, renderStart, this.performance);
       const seek = Math.max(0, overlapStart - event.start);
       const offset = event.loop ? seek % buffer.duration : seek;
-      source.start(overlapStart - chunkStart, offset);
-      source.stop(overlapEnd - chunkStart);
+      source.start(overlapStart - renderStart, offset);
+      source.stop(overlapEnd - renderStart);
     }
-    return await offline.startRendering();
+    const rendered = await offline.startRendering();
+    if (!leadFrames && !latencyFrames) return rendered;
+    const output = new AudioBuffer({ length: frameCount, numberOfChannels: 2, sampleRate });
+    const skip = leadFrames + latencyFrames;
+    for (let channel = 0; channel < 2; channel += 1) output.copyToChannel(rendered.getChannelData(channel).subarray(skip, skip + frameCount), channel);
+    return output;
   }
 
   /**

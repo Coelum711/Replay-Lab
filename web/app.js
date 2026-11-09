@@ -1,6 +1,7 @@
 import { WorkerReplayLabFreeTtsProvider } from './worker-tts-provider.js';
 import {serviceFetch} from './desktop-client.js';
 import {createProsodyEditor} from './prosody-editor.js';
+import {createTranslationBridge} from './translation-bridge-controller.js';
 import {
   createDefaultImporterRegistry,
   compilePerformance,
@@ -737,7 +738,11 @@ function renderCharacters() {
     const modelSelect = document.createElement('select'); modelSelect.innerHTML = '<option value="0.6B">0.6B</option><option value="1.7B">1.7B</option>'; modelLabel.append(modelSelect);
     const seedLabel = document.createElement('label'); seedLabel.innerHTML = '<span>固定 Seed</span><small>留空 = 每次变化</small>';
     const seedInput = document.createElement('input'); seedInput.type = 'number'; seedInput.step = '1'; seedInput.placeholder = '例如 42'; seedLabel.append(seedInput);
-    actingGrid.append(modeLabel, emotionLabel, strengthLabel, modelLabel, seedLabel, instructLabel); actingWrap.append(actingGrid);
+    actingGrid.append(modeLabel, emotionLabel, strengthLabel, modelLabel, seedLabel, instructLabel);
+    const stableActingNote = document.createElement('div'); stableActingNote.className = 'muted'; stableActingNote.textContent = '稳定声音克隆不使用情绪基调、强度和补充表演指令；需要时请切换到实验模式。';
+    const syncStableActingNote = () => { stableActingNote.hidden = modeSelect.value !== 'stable-clone'; };
+    modeSelect.addEventListener('change', syncStableActingNote);
+    actingWrap.append(actingGrid, stableActingNote);
 
     const externalVoiceWrap = document.createElement('label');
     externalVoiceWrap.innerHTML = '<span>Voice ID</span><small>由用户自己的 Provider 提供</small>';
@@ -874,6 +879,7 @@ function renderCharacters() {
       loadVoicesButton.style.display = (!external && !voicebox) ? 'inline-block' : 'none';
       previewButton.style.display = (!external && !voicebox) ? 'inline-block' : 'none';
       modeSelect.value = preset.mode || 'stable-clone';
+      syncStableActingNote();
       instructInput.value = preset.instruct || '';
       emotionSelect.value = preset.actingPreset || '';
       actingStrength.value = preset.actingStrength || 'natural';
@@ -1041,6 +1047,10 @@ function syncLineLanguageInput() {
   $('#lineActingOverride').checked = !!acting;
   $('#lineInstruct').disabled = !acting;
   $('#lineSeed').disabled = !acting;
+  $('#lineActingPreset').disabled = !acting;
+  $('#lineActingStrength').disabled = !acting;
+  $('#lineActingPreset').value = acting?.actingPreset || '';
+  $('#lineActingStrength').value = acting?.actingStrength || 'natural';
   $('#lineInstruct').value = acting?.instruct || '';
   $('#lineSeed').value = Number.isInteger(acting?.seed) ? acting.seed : '';
 }
@@ -1208,7 +1218,9 @@ $('#defaultTtsProvider').addEventListener('change',()=>{
 });
 $('#checkVoicebox').addEventListener('click', async()=>{
   const state=$('#voiceboxState'), detail=$('#voiceboxDetail'); state.className='speech-status busy';state.textContent='检查中';
-  try{const provider=resetVoiceboxProvider();await provider.health();const voices=await provider.listVoices(project?.settings?.speechLanguage||project?.settings?.logLanguage||'auto');state.className='speech-status ok';state.textContent='已连接';detail.textContent=`${voices.length} 个 Profile · 同语言样本会优先显示；Replay Lab 会显式发送目标语言。`;if(project)renderCharacters();}
+  try{const provider=resetVoiceboxProvider();const health=await provider.health();const voices=await provider.listVoices(project?.settings?.speechLanguage||project?.settings?.logLanguage||'auto');
+    const bridge=await provider.bridgeHealth().then(row=>row.ready?'情绪桥已就绪':'情绪桥已连接，但未就绪（实验模式暂不可用）').catch(()=>'情绪桥未启动（只有实验模式需要）');
+    state.className='speech-status ok';state.textContent='已连接';detail.textContent=`${voices.length} 个 Profile · 后端 ${health?.backend_type||'未知'} · 已加载模型 ${health?.model_loaded?(health.model_size||'未知'):'无'} · ${bridge}。同语言样本会优先显示；生成期间请保持 Voicebox 运行。`;if(project)renderCharacters();}
   catch(error){state.className='speech-status error';state.textContent='未连接';detail.textContent=`连接失败：${error.message||error}`;}
 });
 $('#voiceboxEndpoint').addEventListener('change',()=>{resetVoiceboxProvider();if(project)renderCharacters();});
@@ -1240,7 +1252,7 @@ function saveLineActing() {
   const line = currentLine(); if (!line) return;
   line.speech ??= {};
   if ($('#lineActingOverride').checked) {
-    line.speech.acting = { actingPreset: '', instruct: $('#lineInstruct').value.trim() };
+    line.speech.acting = { actingPreset: $('#lineActingPreset').value, actingStrength: $('#lineActingStrength').value, instruct: $('#lineInstruct').value.trim() };
     if ($('#lineSeed').value !== '') line.speech.acting.seed = Number($('#lineSeed').value);
   } else { delete line.speech.acting; }
   invalidateCharacterAudio(line.speakerId);
@@ -1249,6 +1261,8 @@ function saveLineActing() {
 $('#lineActingOverride').addEventListener('change', () => { saveLineActing(); syncLineLanguageInput(); });
 $('#lineInstruct').addEventListener('input', saveLineActing);
 $('#lineSeed').addEventListener('input', saveLineActing);
+$('#lineActingPreset').addEventListener('change', saveLineActing);
+$('#lineActingStrength').addEventListener('change', saveLineActing);
 
 $('#logLanguage').addEventListener('input', () => {
   if (!project) return;
@@ -1365,6 +1379,7 @@ $('#downloadLineAudio').addEventListener('click', async () => {
   }catch(error){setStatus(`音频下载失败：${error.message||error}`,'error')}finally{button.textContent=oldText;syncCurrentAudioUi()}
 });
 
+createTranslationBridge({root:document,getProject:()=>project,fetchImpl:serviceFetch,getEndpoint:()=>$('#voiceboxEndpoint').value.trim()||'http://127.0.0.1:17493',onApplied(speakers){speakers.forEach(invalidateCharacterAudio);$('#speechLanguage').value=project.settings.speechLanguage;renderCharacters();renderLinePreview();compile();}});
 prosodyEditor=createProsodyEditor({
   context(){
     const line=currentLine();if(!project||!line||line.type==='command')return null;

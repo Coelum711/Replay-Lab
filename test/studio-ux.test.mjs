@@ -78,7 +78,7 @@ test('0.23 Studio exposes focus layouts, splitters, virtual long-log adapter, an
   assert.match(studioHtml, /id="cancelExport"[^>]*hidden/);
   assert.match(studioJs, /new VirtualScriptList/);
   assert.match(studioJs, /@tanstack\/virtual-core@3\.17\.9/);
-  assert.match(studioJs, /mediabunny@1\.56\.0/);
+  assert.match(studioJs, /vendor\/mediabunny\/mediabunny\.min\.js/);
   assert.match(studioJs, /AbortController/);
   assert.match(studioJs, /signal:activeExportController\.signal/);
 });

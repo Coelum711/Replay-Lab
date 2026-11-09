@@ -87,3 +87,103 @@ test('launcher provides a narrow same-origin Voicebox bridge instead of relying 
   assert.doesNotMatch(launcher, /\/__voicebox\/shutdown/);
 });
 
+
+function voiceboxMock({ profiles=[{ id:'p1', name:'A', language:'ja', voice_type:'cloned' }], generate, history }={}) {
+  const calls=[];
+  const fetchImpl=async(url,options={})=>{
+    const path=String(url);calls.push({path,method:options.method||'GET',body:options.body&&JSON.parse(options.body)});
+    if(path.endsWith('/profiles'))return jsonResponse(profiles);
+    if(path.endsWith('/cancel'))return jsonResponse({ok:true});
+    if(path.endsWith('/generate'))return generate?generate(options):jsonResponse({id:'g1',status:'completed',duration:1});
+    if(path.endsWith('/history/g1'))return history?history(options):jsonResponse({id:'g1',status:'completed',duration:1});
+    if(path.endsWith('/audio/g1'))return new Response(new Uint8Array([1]),{headers:{'Content-Type':'audio/wav'}});
+    throw new Error(`Unexpected URL ${path}`);
+  };
+  return {calls,fetchImpl,generated:()=>calls.find(c=>c.path.endsWith('/generate'))?.body};
+}
+
+test('Voicebox auto language follows the profile instead of defaulting to English', async()=>{
+  const m=voiceboxMock();
+  await new VoiceboxLocalTtsProvider({fetchImpl:m.fetchImpl}).synthesize({text:'x',voiceId:'p1'});
+  assert.equal(m.generated().language,'ja');
+});
+
+test('Voicebox rejects unsupported languages before submitting and maps aliases', async()=>{
+  const m=voiceboxMock();const provider=new VoiceboxLocalTtsProvider({fetchImpl:m.fetchImpl});
+  await assert.rejects(provider.synthesize({text:'x',voiceId:'p1',language:'vi-VN'}),/不支持朗读语言/);
+  assert.equal(m.generated(),undefined);
+  await provider.synthesize({text:'x',voiceId:'p1',language:'nb-NO'});
+  assert.equal(m.generated().language,'no');
+});
+
+test('Voicebox sends the engine a preset voice needs but leaves cloned voices alone', async()=>{
+  const preset=voiceboxMock({profiles:[{id:'p1',language:'en',voice_type:'preset',preset_engine:'kokoro'}]});
+  await new VoiceboxLocalTtsProvider({fetchImpl:preset.fetchImpl}).synthesize({text:'x',voiceId:'p1'});
+  assert.equal(preset.generated().engine,'kokoro');
+  const cloned=voiceboxMock();
+  await new VoiceboxLocalTtsProvider({fetchImpl:cloned.fetchImpl}).synthesize({text:'x',voiceId:'p1'});
+  assert.equal('engine' in cloned.generated(),false);
+});
+
+test('Voicebox explains deleted profiles, closed apps and mid-generation shutdowns', async()=>{
+  const m=voiceboxMock({profiles:[]});
+  await assert.rejects(new VoiceboxLocalTtsProvider({fetchImpl:m.fetchImpl}).synthesize({text:'x',voiceId:'p1'}),/Profile 已不存在/);
+  const down=new VoiceboxLocalTtsProvider({fetchImpl:async()=>{throw new TypeError('fetch failed');}});
+  await assert.rejects(down.synthesize({text:'x',voiceId:'p1'}),/连不上 Voicebox/);
+  await assert.rejects(down.bridgeHealth(),/情绪桥没有启动/);
+  const stopped=voiceboxMock({generate:()=>jsonResponse({id:'g1',status:'generating'}),history:()=>jsonResponse({id:'g1',status:'failed',error:'Server was shut down during generation'})});
+  await assert.rejects(new VoiceboxLocalTtsProvider({fetchImpl:stopped.fetchImpl,pollIntervalMs:1}).synthesize({text:'x',voiceId:'p1'}),/生成途中被关闭/);
+});
+
+test('Voicebox surfaces validation detail instead of raw JSON', async()=>{
+  const m=voiceboxMock({generate:()=>jsonResponse({detail:[{msg:'bad value'}]},422)});
+  await assert.rejects(new VoiceboxLocalTtsProvider({fetchImpl:m.fetchImpl}).synthesize({text:'x',voiceId:'p1'}),/HTTP 422）：bad value$/);
+});
+
+test('aborting cancels the running Voicebox job so it stops occupying the queue', async()=>{
+  const controller=new AbortController();
+  const m=voiceboxMock({generate:()=>jsonResponse({id:'g1',status:'generating'}),history:()=>{controller.abort();return jsonResponse({id:'g1',status:'generating'});}});
+  await assert.rejects(new VoiceboxLocalTtsProvider({fetchImpl:m.fetchImpl,pollIntervalMs:1}).synthesize({text:'x',voiceId:'p1',signal:controller.signal}));
+  await new Promise(resolve=>setTimeout(resolve,5));
+  assert.ok(m.calls.some(c=>c.path.endsWith('/generate/g1/cancel')&&c.method==='POST'));
+});
+
+test('a Voicebox timeout reports what to check and cancels the job', async()=>{
+  const m=voiceboxMock({generate:()=>jsonResponse({id:'g1',status:'generating'}),history:()=>jsonResponse({id:'g1',status:'generating'})});
+  await assert.rejects(new VoiceboxLocalTtsProvider({fetchImpl:m.fetchImpl,pollIntervalMs:1,timeoutMs:30}).synthesize({text:'x',voiceId:'p1'}),/仍未完成这句/);
+  await new Promise(resolve=>setTimeout(resolve,5));
+  assert.ok(m.calls.some(c=>c.path.endsWith('/generate/g1/cancel')));
+});
+
+const LONG_LINE='ふたりが別れたとき、言葉もなく、涙に濡れた。胸は半ば砕けたまま、幾年も、離ればなれに。';
+function cutOffMock(durations,profile={id:'p1',language:'ja',voice_type:'cloned',sample_count:1}){
+  let n=0;
+  const m=voiceboxMock({profiles:[profile],generate:()=>jsonResponse({id:'g1',status:'completed',duration:durations[Math.min(n++,durations.length-1)]})});
+  return {...m,count:()=>m.calls.filter(c=>c.path.endsWith('/generate')).length};
+}
+
+test('a cut-off Voicebox line is retried and the complete take is used', async()=>{
+  const m=cutOffMock([1.1,1.5,6.5]);
+  const result=await new VoiceboxLocalTtsProvider({fetchImpl:m.fetchImpl}).synthesize({text:LONG_LINE,voiceId:'p1',language:'ja'});
+  assert.equal(result.duration,6.5);assert.equal(m.count(),3);
+});
+
+test('persistently cut-off lines are rejected and blame long multi-sample references', async()=>{
+  const m=cutOffMock([1.1],{id:'p1',language:'ja',sample_count:3});
+  await assert.rejects(new VoiceboxLocalTtsProvider({fetchImpl:m.fetchImpl}).synthesize({text:LONG_LINE,voiceId:'p1',language:'ja'}),/很可能没读完.*3 段参考样本/);
+  assert.equal(m.count(),3);assert.equal(m.calls.some(c=>c.path.endsWith('/audio/g1')),false);
+});
+
+test('a fixed seed is not retried because it would repeat the same take', async()=>{
+  const m=cutOffMock([1.1]);
+  await assert.rejects(new VoiceboxLocalTtsProvider({fetchImpl:m.fetchImpl}).synthesize({text:LONG_LINE,voiceId:'p1',language:'ja',seed:4}),/固定了 Seed/);
+  assert.equal(m.count(),1);
+});
+
+test('short interjections and normal lines are never treated as cut off', async()=>{
+  for(const [text,duration] of [['えっ！',0.3],['Hello there my friend, how are you today?',2.2],[LONG_LINE,4.2]]){
+    const m=cutOffMock([duration]);
+    await new VoiceboxLocalTtsProvider({fetchImpl:m.fetchImpl}).synthesize({text,voiceId:'p1'});
+    assert.equal(m.count(),1,text);
+  }
+});

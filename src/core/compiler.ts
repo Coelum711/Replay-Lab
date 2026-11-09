@@ -179,8 +179,12 @@ function applyStageCommand(
   index = 0
 ): { roster: string[]; positions: Record<string, StagePosition> } {
   const command = line.type === 'command' ? line.command : null;
-  if (!command || !['enter', 'dismiss'].includes(command.kind) || !command.characterId) return { roster, positions };
+  if (!command || !['enter', 'dismiss', 'move'].includes(command.kind) || !command.characterId) return { roster, positions };
   const id = command.characterId;
+  if (command.kind === 'move') {
+    if (!roster.includes(id) || !command.position || command.position === 'auto') return { roster, positions };
+    return { roster, positions: { ...positions, [id]: command.position } };
+  }
   if (command.kind === 'dismiss') {
     const nextRoster = roster.filter(item => item !== id);
     const nextPositions = { ...positions };
@@ -212,7 +216,7 @@ function applyStageCommand(
 
 function commandBlockingLine(line: ReplayLine): ReplayLine {
   const command = line.type === 'command' ? line.command : null;
-  if (command?.kind !== 'enter' || !command.characterId || !command.position || command.position === 'auto') return line;
+  if ((command?.kind !== 'enter' && command?.kind !== 'move') || !command.characterId || !command.position || command.position === 'auto') return line;
   return { ...line, stagePositions: { ...(line.stagePositions ?? {}), [command.characterId]: command.position } };
 }
 
@@ -396,6 +400,8 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
   const lines: PerformanceDocument['lines'] = [];
   let cursor = 0;
   let explicitPositions: Record<string, StagePosition> = {};
+  // Once a row uses enter/exit, state.roster owns the stage (it may legitimately be empty).
+  let explicitStage = false;
   let carriedTransforms: Record<string, StageTransform> = {};
   let carriedCameraTransform: CameraTransform = { ...DEFAULT_CAMERA_TRANSFORM };
   let currentSceneKey = sceneKeys[0] ?? '0:0';
@@ -412,6 +418,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     const sceneKey = sceneKeys[index] ?? '0:0';
     if (index > 0 && sceneKey !== currentSceneKey) {
       carriedTransforms = {};
+      for (const visual of Object.values(state.characterVisuals)) delete visual.transform;
       carriedCameraTransform = { ...DEFAULT_CAMERA_TRANSFORM };
       sceneGraphState = normalizeSceneGraphSettings(projectSceneGraph);
     }
@@ -426,7 +433,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     }
     const localTransformIds = new Set<string>();
     for (const [id, rawTransform] of Object.entries(line.stageTransforms ?? {})) {
-      if (rawTransform === null) { delete carriedTransforms[id]; continue; }
+      if (rawTransform === null) { delete carriedTransforms[id]; if (state.characterVisuals[id]) delete state.characterVisuals[id]!.transform; continue; }
       carriedTransforms[id] = sanitizeStageTransform(rawTransform);
       localTransformIds.add(id);
     }
@@ -434,7 +441,8 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     // Preserve the historical index-0 behavior: a first-line enter/exit event
     // seeds from the first automatically-directed frame.
     const previousAutoFrame = autoFrames[Math.max(0, index - 1)] ?? { roster: [], positions: {} };
-    if (!state.roster.length && (line.scene?.enterIds?.length || line.scene?.exitIds?.length)) {
+    if (!explicitStage && (line.scene?.enterIds?.length || line.scene?.exitIds?.length)) {
+      explicitStage = true;
       state.roster = [...previousAutoFrame.roster];
       explicitPositions = { ...previousAutoFrame.positions };
     }
@@ -484,6 +492,16 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     }
     if (line.type === 'command' && line.command?.kind === 'dismiss' && line.command.characterId) delete carriedTransforms[line.command.characterId];
     for (const id of line.scene?.enterIds ?? []) if (!state.roster.includes(id)) state.roster.push(id);
+    if (explicitStage) {
+      const applied = applyStageCommand(line, state.roster, explicitPositions, chars, project.settings.maxOnStage);
+      state.roster = [...applied.roster];
+      explicitPositions = applied.positions;
+      const joining = visibleSpeaker(line, chars);
+      if (joining && line.stageMode !== 'custom' && !state.roster.includes(joining) && !line.scene?.exitIds?.includes(joining)) {
+        while (state.roster.length >= project.settings.maxOnStage) state.roster.shift();
+        state.roster.push(joining);
+      }
+    }
 
     if (line.expressionMode === 'set' && line.expression) {
       state.expressions[line.speakerId] = line.expression;
@@ -495,10 +513,10 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     let positions: Record<string, StagePosition>;
     if (line.stageMode === 'custom') {
       roster = (line.stageIds ?? []).filter(id => chars.has(id));
-      positions = solveStagePositions(roster, chars, line, {}, null);
-    } else if (state.roster.length) {
+      positions = solveStagePositions(roster, chars, line, { ...(autoFrames[index]?.positions ?? {}), ...(explicitStage ? explicitPositions : {}) }, null);
+    } else if (explicitStage) {
       roster = state.roster.filter(id => chars.get(id)?.showOnStage);
-      positions = solveStagePositions(roster, chars, line, explicitPositions, null);
+      positions = solveStagePositions(roster, chars, commandBlockingLine(line), explicitPositions, null);
       explicitPositions = { ...positions };
     } else {
       const frame = autoFrames[index] ?? { roster: [], positions: {} };
@@ -610,6 +628,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       audioAssetId: line.audioAssetId,
       sfxAssetId: line.type === 'command' && line.command?.kind === 'sfx' ? line.command.assetId : line.sfxAssetId,
       audioMix: { ...(line.audioMix ?? {}) },
+      ...(line.type !== 'command' && line.duration != null ? { voiceClip: true } : {}),
       bgmFadeSeconds: line.scene?.bgmFadeSeconds ?? null
     });
     cursor = end + (index === project.lines.length - 1 ? 0 : line.type === 'command' ? 0 : 0.18);

@@ -1002,6 +1002,8 @@ export interface PerformanceLine {
   audioAssetId?: string | null;
   sfxAssetId?: string | null;
   audioMix: AudioLineMix;
+  /** True when the author fixed this row's length, so its voice must not run past line end. */
+  voiceClip?: boolean;
   bgmFadeSeconds?: number | null;
 }
 

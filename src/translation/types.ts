@@ -5,6 +5,9 @@ export interface TranslationRequest {
   text: string;
   sourceLanguage?: string;
   targetLanguage: string;
+  /** Context for providers that can follow character voice; literal providers may ignore these. */
+  speaker?: string;
+  styleNotes?: string;
   /** Optional regional-language style intent; literal translation providers may ignore it. */
   accent?: AccentTranslationHint;
 }

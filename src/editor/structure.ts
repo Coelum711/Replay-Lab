@@ -226,6 +226,19 @@ export function deleteLinesStructureAware(project: ReplayProject, lineIds: Itera
   const assignments = assignmentMap(project);
   const next = project.lines.filter(line => !ids.has(line.id));
   if (next.length === project.lines.length) return false;
+  // Background/CG/BGM on a deleted row persist for later rows, so hand them to the next survivor.
+  // Walk backwards: the latest deleted change is the one the following rows were seeing.
+  for (let index = project.lines.length - 1; index >= 0; index -= 1) {
+    const removed = project.lines[index]!;
+    if (!ids.has(removed.id) || !removed.scene) continue;
+    const target = project.lines.slice(index + 1).find(line => !ids.has(line.id));
+    if (!target) continue;
+    for (const key of ['background', 'cg', 'bgm', 'ambient', 'cgPresentation'] as const) {
+      if (!Object.prototype.hasOwnProperty.call(removed.scene, key)) continue;
+      target.scene ??= {} as NonNullable<ReplayLine['scene']>;
+      if (!Object.prototype.hasOwnProperty.call(target.scene, key)) (target.scene as Record<string, unknown>)[key] = structuredClone(removed.scene[key]);
+    }
+  }
   project.lines = next;
   materializeOutlineAssignments(project, assignments);
   return true;

@@ -96,7 +96,7 @@ test('0.28 VN runtime separates playback state from rendering and blocks AUTO on
   };
   const shown=[];
   const renderer={ async renderLine(i,t){shown.push([i,t])} };
-  const player={ stop(){}, async playLine(i){shown.push(['play',i])} };
+  const player={ stop(){}, stopLine(){}, async playLineUntilEnd(i){shown.push(['play',i])}, async playLine(i){shown.push(['play',i])} };
   const runtime=new VNReplayRuntime(perf,renderer,player,{}, {autoDelayMs:0,skipDelayMs:35});
   await runtime.start(0);
   await runtime.next();

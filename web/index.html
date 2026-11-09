@@ -79,6 +79,7 @@
     <div id="linePreview" class="line-preview"></div>
     <details><summary>本句表演指令</summary><div class="stack disclosure">
       <label class="check-label"><input id="lineActingOverride" type="checkbox">单独设置本句情绪（取消则继承角色）</label>
+      <div class="row"><label>情绪基调<select id="lineActingPreset" disabled><option value="">无</option><option value="warm and gentle">温柔</option><option value="restrained anger, low and cold, do not shout">压着火气</option><option value="frightened, breath unsteady, trying to stay quiet">恐惧</option><option value="exhausted, quiet and slightly breathy">疲惫</option><option value="amused, with a slight smile">愉快</option><option value="whisper, intimate and close">耳语</option></select></label><label>情绪强度<select id="lineActingStrength" disabled><option value="subtle">轻微</option><option value="natural" selected>自然</option><option value="strong">明显</option></select></label></div>
       <label>表演指令<textarea id="lineInstruct" rows="2" disabled placeholder="例如：压低声音，克制愤怒；最后两个词加重。留空表示本句不附加情绪指令。"></textarea></label>
       <label>本句 Seed<input id="lineSeed" type="number" min="0" max="4294967295" step="1" disabled placeholder="留空使用角色 Seed"></label>
       <small class="muted">保持角色 Profile 继承；实验模式下生效。已有音频不会因编辑指令而自动重新生成。</small>
@@ -108,6 +109,14 @@
     <details><summary class="muted">翻译测试</summary><div class="row disclosure"><input id="translateEndpoint" value="http://localhost:5000" style="max-width:320px" aria-label="翻译服务地址"><button id="useLibreTranslate">将 LibreTranslate 设为工程翻译服务</button><button id="translateLine">翻译当前句</button></div><small class="muted">修改连接地址不会改写工程的翻译服务。角色或单句的自定义服务仍优先。</small></details>
   </section>
 
+  <details class="card" id="translationBridge"><summary>表里翻译 · 台词显示不变，只改朗读文本</summary><div class="stack disclosure">
+    <div class="muted">可选功能。不使用时，声音按台词原文朗读。译文先进下方对照表，勾选采用后才生效。</div>
+    <div class="row"><label>翻译方式<select id="tbMode"><option value="local">本地 4B（离线草稿）</option><option value="paste">复制到 AI 网页</option></select></label><label>朗读语言<input id="tbTarget" value="ja" style="max-width:90px"></label><button id="tbLoad">载入台词</button><span id="tbState" class="speech-status">未载入</span></div>
+    <label>角色口吻与称呼<textarea id="tbStyle" rows="3" placeholder="例如：安东尼奥说关西腔；王耀句尾用「ある」；亚瑟自称「俺」。"></textarea></label>
+    <div id="tbLocalControls" class="row"><button id="tbRunLocal" class="primary">翻译未填写的句子</button><button id="tbStop" disabled>停止</button><small class="muted">需要 Voicebox 开着。本地模型只能出草稿，请逐句审阅。</small></div>
+    <div id="tbPasteControls" class="stack" hidden><div class="row"><select id="tbBatch" aria-label="翻译批次"></select><button id="tbCopy" class="primary">复制这批的提示词</button></div><textarea id="tbPrompt" rows="3" readonly aria-label="提示词" placeholder="点上面的按钮生成提示词"></textarea><label>粘贴 AI 的回复<textarea id="tbReply" rows="4" placeholder="#12｜译文"></textarea></label><div class="row"><button id="tbImport">导入这批译文</button></div></div>
+    <div id="tbTable" class="stack" hidden><div class="row"><button id="tbApply" class="primary">采用勾选的译文</button></div><table style="width:100%"><thead><tr><th>采用</th><th>行</th><th>台词</th><th>朗读文本</th></tr></thead><tbody id="tbRows"></tbody></table></div>
+  </div></details>
   <details class="card"><summary>调试：Performance JSON</summary><pre id="output" class="disclosure"></pre></details>
   <datalist id="languageOptions"><option value="en-GB"><option value="en-US"><option value="en-IN"><option value="en-AU"><option value="en-CA"><option value="fr-FR"><option value="de-DE"><option value="ja-JP"><option value="zh-CN"></datalist>
 </div>

@@ -128,8 +128,9 @@ export const RplGenImporter: ReplayImporter = {
   label: 'RplGen / RGL script',
   extensions: ['.rgl'],
   sniff(input) {
-    if (/^\[(?:[\w .;,()]+)\]/m.test(input) && /^<(?:background|animation|bubble|clear|dice|hitpoint|wait|bgm|BGM)>/m.test(input)) return 0.98;
-    if (/^\[(?:[\w .;,()]+)\]/m.test(input)) return 0.72;
+    if (/^\[[\p{L}\p{N}_ .;,()]+\]/mu.test(input) && /^<(?:background|animation|bubble|clear|dice|hitpoint|wait|bgm|BGM)>/m.test(input)) return 0.98;
+    if (/^\[[\p{L}\p{N}_ .;,()]+\]\s*(?:<[^>]+>\s*)?[:：]/mu.test(input)) return 0.9;
+    if (/^\[[\p{L}\p{N}_ .;,()]+\]/mu.test(input)) return 0.72;
     return 0;
   },
   parse(input, context) {
@@ -157,7 +158,7 @@ export const RplGenImporter: ReplayImporter = {
       if (!line || line.startsWith('#')) continue;
 
       // [A,B(30).happy]<black_pass_up_minor=30>:text<w2w=2>{SE}
-      const dialogue = line.match(/^\[([^\]]+)\]\s*(<[^>]+>)?\s*:?\s*(.*)$/);
+      const dialogue = line.match(/^\[([^\]]+)\]\s*(<[^>]+>)?\s*[:：]?\s*(.*)$/);
       if (dialogue) {
         const characterSet = parseCharacterSet(dialogue[1]!);
         const speaker = characterSet[0]?.name ?? 'Unknown';
@@ -176,7 +177,7 @@ export const RplGenImporter: ReplayImporter = {
           created.stageMode = 'custom';
           created.stageIds = characterSet.map(token => ensureCharacter(project, token.name).id);
         }
-        if (characterSet[0]?.subtype && characterSet[0].subtype !== 'default') created.expression = characterSet[0].subtype;
+        if (characterSet[0]?.subtype && characterSet[0].subtype !== 'default') { created.expression = characterSet[0].subtype; created.expressionMode = 'set'; }
         created.metadata = {
           ...(created.metadata ?? {}),
           rplgen: {
@@ -270,11 +271,10 @@ export const RplGenImporter: ReplayImporter = {
       const txDurDefault = line.match(/^<set:tx_dur_default>\s*:?\s*(\d+(?:\.\d+)?)/i);
       if (txDurDefault) { defaultTextMethodFrames = Number(txDurDefault[1]); continue; }
 
-      // RplGen wait is frame-oriented; retain old Replay Lab behavior for compatibility
-      // but annotate the imported command so a future strict-RGL mode can reinterpret it.
+      // RplGen wait is frame-oriented (30 fps).
       const wait = line.match(/^<wait>\s*:?\s*(\d+(?:\.\d+)?)/i);
       if (wait && project.lines.length) {
-        project.lines[project.lines.length - 1]!.duration = Number(wait[1]);
+        project.lines[project.lines.length - 1]!.duration = Number(wait[1]) / 30;
         project.lines[project.lines.length - 1]!.metadata = {
           ...(project.lines[project.lines.length - 1]!.metadata ?? {}),
           rplgenWait: Number(wait[1])

@@ -170,7 +170,7 @@ test('0.42 VN runtime executes command rows automatically and lands on the next 
   };
   const shown=[];
   const renderer={async renderLine(i,t){shown.push(['render',i,t])}};
-  const player={stop(){},async playLine(i){shown.push(['play',i])}};
+  const player={stop(){},stopLine(){}, async playLineUntilEnd(i){shown.push(['play',i])}, async playLine(i){shown.push(['play',i])}};
   const runtime=new VNReplayRuntime(perf,renderer,player);
   await runtime.start(0);
   await runtime.next();

@@ -42,7 +42,7 @@ async function start(){
     win.webContents.on('will-navigate',(event,url)=>{if(!url.startsWith(APP_ORIGIN+'/web/')){event.preventDefault();if(safeExternal(url))void shell.openExternal(url);}});
     win.webContents.setWindowOpenHandler(({url,frameName})=>{
       if(url===APP_ORIGIN+'/web/index.html')return {action:'allow',overrideBrowserWindowOptions:{width:1100,height:850,minWidth:760,minHeight:600,title:'Replay Lab · 声音',backgroundColor:'#17191f',titleBarStyle:process.platform==='darwin'?'hiddenInset':'default',webPreferences}};
-      if(url===APP_ORIGIN+'/web/studio.html'){mainWindow?.show();mainWindow?.focus();return {action:'deny'};}
+      if(url===APP_ORIGIN+'/web/studio.html'){revealMain();return {action:'deny'};}
       try{if(safeExternal(url))void shell.openExternal(url);}catch{}
       return {action:'deny'};
     });
@@ -56,6 +56,7 @@ async function start(){
       for(const [key,job] of requests)if(job.owner===ownerId){job.controller.abort();requests.delete(key);}
     });
   }
+  function revealMain(){if(!mainWindow||mainWindow.isDestroyed())createMain();mainWindow.show();mainWindow.focus();}
   function createMain(){
     const bounds=preferences.window||{};
     mainWindow=new BrowserWindow({width:Math.max(1100,Math.min(1800,bounds.width||1460)),height:Math.max(740,Math.min(1200,bounds.height||960)),minWidth:1020,minHeight:720,show:false,title:'Replay Lab',backgroundColor:'#17191f',titleBarStyle:process.platform==='darwin'?'hiddenInset':'default',trafficLightPosition:{x:18,y:21},icon:path.join(__dirname,'assets/icon.png'),webPreferences});
@@ -65,8 +66,8 @@ async function start(){
     win.once('ready-to-show',()=>win.show());
     void win.loadURL(APP_ORIGIN+'/web/studio.html');
   }
-  app.on('second-instance',()=>{if(!mainWindow||mainWindow.isDestroyed())createMain();mainWindow.show();mainWindow.focus();});
-  app.on('activate',()=>{if(!BrowserWindow.getAllWindows().length)createMain();else mainWindow?.show();});
+  app.on('second-instance',revealMain);
+  app.on('activate',revealMain);
   app.on('window-all-closed',()=>{if(process.platform!=='darwin')app.quit();});
   app.on('before-quit',()=>{void files.dispose();});
   handle('replay:recent',()=>preferences.recent.map(({id,label,updatedAt})=>({id,label,updatedAt})));

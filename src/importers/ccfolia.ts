@@ -77,6 +77,7 @@ export const CocofoliaImporter: ReplayImporter = {
     if (/class=["'][^"']*player-message/i.test(input)) score += 0.6;
     if (/class=["'][^"']*speaker-text/i.test(input)) score += 0.3;
     if (/<span[^>]*>\s*\[(main|メイン)/i.test(input)) score += 0.2;
+    if (/<p\b[^>]*>\s*<span\b[^>]*>[\s\S]*?<\/span>\s*<span\b/i.test(input)) score += 0.4;
     return Math.min(1, score);
   },
   parse(input, context) {

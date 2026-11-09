@@ -74,7 +74,11 @@ export function parseDirectorCommand(project: ReplayProject, text: string): Dire
     const c = character(project, args[0]);
     if (!c) return { command: null, error: `找不到角色：${args[0]}` };
     if (kind === 'dismiss') return { command: { kind, target: args[0], characterId: c.id } };
-    if (kind === 'move') return { command: { kind, target: args[0], characterId: c.id } };
+    if (kind === 'move') {
+      const rawPos = (args[1] ?? 'auto') as StagePosition;
+      if (!POSITION_VALUES.has(rawPos)) return { command: null, error: `未知站位：${args[1]}` };
+      return { command: { kind, target: args[0], characterId: c.id, ...(rawPos !== 'auto' ? { position: rawPos } : {}) } };
+    }
     if (kind === 'motion') {
       const action = (args[1] ?? '').trim();
       if (!action) return { command: null, error: '/motion 需要已有自定义动作名。' };
@@ -164,7 +168,7 @@ export function formatDirectorCommand(project: ReplayProject, command: ReplayDir
   switch (command.kind) {
     case 'dismiss': return `/dismiss ${quoteArg(charName ?? command.target ?? '')}`.trim();
     case 'enter': return `/enter ${quoteArg(charName ?? command.target ?? '')}${command.position && command.position !== 'auto' ? ` ${command.position}` : ''}`.trim();
-    case 'move': return `/move ${quoteArg(charName ?? command.target ?? '')}`.trim();
+    case 'move': return `/move ${quoteArg(charName ?? command.target ?? '')}${command.position && command.position !== 'auto' ? ` ${command.position}` : ''}`.trim();
     case 'motion': return `/motion ${quoteArg(charName ?? command.target ?? '')} ${quoteArg(command.value ?? 'replace')} ${Math.max(0, Number(command.duration) || 0.5)}`.trim();
     case 'expression': return `/expression ${quoteArg(charName ?? command.target ?? '')} ${quoteArg(command.expression ?? 'default')}`.trim();
     case 'background': return `/bg ${quoteArg(assetName ?? command.target ?? 'none')}`;

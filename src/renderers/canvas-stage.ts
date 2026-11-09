@@ -295,6 +295,19 @@ export function locatePerformanceLine(performance: PerformanceDocument, time: nu
   return { line: performance.lines[lastIndex]!, index: lastIndex, localTime: performance.lines[lastIndex]!.duration };
 }
 
+function wrapTextLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const char of Array.from(String(text ?? ''))) {
+    if (char === '\n') { lines.push(line); line = ''; continue; }
+    const test = line + char;
+    if (ctx.measureText(test).width > maxWidth && line) { lines.push(line); line = char; }
+    else line = test;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   const radius = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
@@ -499,6 +512,9 @@ export class CanvasStageRenderer {
   private scratchDepth = 0;
   private customObjectOverrides = new Map<string, CustomObjectInteractionOverride>();
   private customObjectHitRegions: CustomObjectHitRegion[] = [];
+  private stateStartCache = new Map<string, number>();
+  private renderTail: Promise<unknown> = Promise.resolve();
+  private renderTicket = 0;
 
   constructor(options: CanvasStageRendererOptions) {
     this.canvas = options.canvas;
@@ -511,6 +527,7 @@ export class CanvasStageRenderer {
 
   setPerformance(performance: PerformanceDocument): void {
     this.performance = performance;
+    this.stateStartCache.clear();
     this.clearCustomObjectInteractionOverrides();
   }
 
@@ -581,11 +598,35 @@ export class CanvasStageRenderer {
     return canvas;
   }
 
+  /** Seconds since a persistent state began, so its entrance animation does not replay on every line. */
+  private elapsedSince(key: string, line: PerformanceLine, localTime: number, same: (other: PerformanceLine) => boolean): number {
+    const cacheKey = `${key}@${line.index}`;
+    let start = this.stateStartCache.get(cacheKey);
+    if (start === undefined) {
+      let first = line.index - 1;
+      while (first > 0 && same(this.performance.lines[first - 1]!)) first -= 1;
+      start = this.performance.lines[first]?.start ?? line.start;
+      this.stateStartCache.set(cacheKey, start);
+    }
+    return Math.max(0, line.start - start) + localTime;
+  }
+
+  private maskElapsed(mask: SceneMaskSpec, line: PerformanceLine, localTime: number): number {
+    if (!mask.animation || mask.animation === 'none') return localTime;
+    const json = JSON.stringify(mask);
+    const carries = (other: PerformanceLine) => {
+      const graph = other.sceneGraph;
+      const stacks = [graph?.worldEffects, graph?.outputEffects, ...(graph?.layers ?? []).map(item => item.effects), ...(graph?.nodes ?? []).map(item => item.effects)];
+      return stacks.some(stack => stack?.mask && JSON.stringify(stack.mask) === json);
+    };
+    return this.elapsedSince(`mask:${json}`, line, localTime, carries);
+  }
+
   private async drawMask(mask: SceneMaskSpec, canvas: HTMLCanvasElement, line: PerformanceLine, localTime: number): Promise<void> {
     const ctx = canvas.getContext('2d'); if (!ctx) return;
     const { width, height } = canvas;
     const duration = Math.max(0.05, Number(mask.duration) || Number(line.state.cgPresentation?.duration) || 0.6);
-    const raw = clamp(localTime / duration, 0, 1);
+    const raw = clamp(this.maskElapsed(mask, line, localTime) / duration, 0, 1);
     const progress = mask.animation && mask.animation !== 'none' ? replayEase('sigmoid', raw) : 1;
     const x = clamp(Number(mask.x ?? 0.5), -0.5, 1.5) * width;
     const y = clamp(Number(mask.y ?? 0.5), -0.5, 1.5) * height;
@@ -639,7 +680,7 @@ export class CanvasStageRenderer {
     const scratch = this.scratchCanvas(depth, false); const scratchCtx = scratch.getContext('2d');
     if (!scratchCtx) { this.scratchDepth--; await draw(); return; }
     this.ctx = scratchCtx;
-    try { await draw(); } finally { this.ctx = target; }
+    try { await draw(); } catch (error) { this.scratchDepth--; throw error; } finally { this.ctx = target; }
     if (hasAmbient && ambient) this.tintSurface(scratchCtx, ambient.color, ambient.intensity);
     for (const filter of effects?.filters ?? []) if (filter.enabled !== false && filter.kind === 'tint') this.tintSurface(scratchCtx, filter.color ?? '#ffffff', Number(filter.amount ?? 0.25));
     const mask = effects?.mask;
@@ -687,7 +728,7 @@ export class CanvasStageRenderer {
         image.decoding = 'async';
         await new Promise<void>((resolve, reject) => { image.onload = () => resolve(); image.onerror = () => reject(new Error(`Image failed to load: ${ref}`)); image.src = url; });
         return image;
-      })().catch(() => null);
+      })().catch(() => { this.imageCache.delete(ref); return null; });
       this.imageCache.set(ref, promise);
     }
     return promise;
@@ -926,7 +967,9 @@ export class CanvasStageRenderer {
     const baseScale = presentation.fit === 'cover'
       ? Math.max(width / image.naturalWidth, height / image.naturalHeight)
       : Math.min(width / image.naturalWidth, height / image.naturalHeight);
-    const t = clamp(localTime / Math.max(0.05, Number(presentation.duration) || 0.6), 0, 1);
+    const presentationJson = JSON.stringify(presentation);
+    const elapsed = this.elapsedSince(`cg:${ref}:${presentationJson}`, line, localTime, other => other.state.cg === ref && JSON.stringify(other.state.cgPresentation) === presentationJson);
+    const t = clamp(elapsed / Math.max(0.05, Number(presentation.duration) || 0.6), 0, 1);
     const eased = replayEase('sigmoid', t);
     const motionScale = presentation.motion === 'slow-push' ? 1 + eased * 0.045 : 1;
     const dw = image.naturalWidth * baseScale * motionScale;
@@ -1057,8 +1100,8 @@ export class CanvasStageRenderer {
     const turns = 5 + (hashString(`${step.title}:${step.resultLabel}`) % 3);
     const rotation = (turns * Math.PI * 2 + targetDelta) * spinProgress;
 
-    const radius = Math.min(width * 0.255, height * 0.36);
-    const cx = width / 2, cy = height * 0.43;
+    const radius = Math.min(width * 0.255, height * 0.33);
+    const cx = width / 2, cy = height * 0.47;
     const panelW = radius * 2 + width * 0.15, panelH = Math.min(height * 0.82, radius * 2 + 155);
     const panelX = (width - panelW) / 2, panelY = Math.max(18, cy - radius - 58);
     this.ctx.save();
@@ -1210,7 +1253,7 @@ export class CanvasStageRenderer {
     const state={bold:false,italic:false,underline:false,strike:false,fontSize:style.fontSize,color:style.color,background:null as string|null};
     const measure=(token:Token)=>{if(token.kind==='icon')return token.size;this.ctx.font=`${token.italic?'italic ':''}${token.bold?'700':'500'} ${Math.max(8,token.fontSize)}px system-ui`;return this.ctx.measureText(token.value).width;};
     const newline=()=>{if(lines.length<maxLines){lines.push([]);widths.push(0);lineWidth=0;}};
-    const push=(token:Token)=>{const width=measure(token);if(lineWidth+width>maxWidth&&lineWidth>0)newline();if(lines.length>maxLines)return;lines.at(-1)!.push(token);lineWidth+=width;widths[widths.length-1]=lineWidth;};
+    let full=false;const push=(token:Token)=>{if(full)return;const width=measure(token);if(lineWidth+width>maxWidth&&lineWidth>0){if(lines.length>=maxLines){full=true;return;}newline();}lines.at(-1)!.push(token);lineWidth+=width;widths[widths.length-1]=lineWidth;};
     const pattern=/\[([^\]]+)\]/g; let last=0, match:RegExpExecArray|null;
     const addPlain=(value:string)=>{for(const ch of Array.from(value)){if(ch==='\n'){newline();continue;}push({kind:'text',value:ch,bold:state.bold,italic:state.italic,underline:state.underline,strike:state.strike,fontSize:state.fontSize,color:state.color,background:state.background});}};
     while((match=pattern.exec(text))){addPlain(text.slice(last,match.index));const tag=match[1]!;last=match.index+match[0].length;
@@ -1273,7 +1316,7 @@ export class CanvasStageRenderer {
 
   private chatHistory(line:PerformanceLine,def:ReplayChatWindowDefinition):PerformanceLine[]{
     const idx=Math.max(0,line.index-1);const out:PerformanceLine[]=[];
-    for(let i=idx;i>=0;i--){const item=this.performance.lines[i]!;if(item.chapterTitle!==line.chapterTitle||item.sceneTitle!==line.sceneTitle)break;const style=item.bubble?.definitionId??item.dialogueStyleId;if(style===def.id||style===def.name)out.push(item);}
+    for(let i=idx;i>=0;i--){const item=this.performance.lines[i]!;const style=item.bubble?.definitionId??item.dialogueStyleId;if(style===def.id||style===def.name)out.push(item);if(item.chapterTitle||item.sceneTitle)break;}
     return out.reverse();
   }
 
@@ -1294,6 +1337,22 @@ export class CanvasStageRenderer {
     const bubbleDef=def&&['bubble','balloon','dynamic-bubble'].includes(def.type)?def as ReplayBubbleDefinition:undefined;const effectLine={text:rawMain,textEffect:event?.textEffect??line.textEffect,textEffectDuration:event?.textEffectDuration??line.textEffectDuration,duration:line.duration};const main=revealText(effectLine,localTime);const header=event?.headerText||(line.type==='dialogue'?line.speakerName:'');await this.drawBubbleDefinition(bubbleDef,header,main,color,undefined,line);return true;
   }
 
+  /** Shrinks to fit the whole line (sized from the full text so typing effects don't resize), then ellipsizes. */
+  private drawFittedText(displayText: string, fullText: string, x: number, y: number, maxWidth: number, maxHeight: number, baseSize: number, minSize: number, ratio: number, align: CanvasTextAlign, weight = ''): void {
+    let size = baseSize, fullLines = 0;
+    for (;; size -= 1) {
+      this.ctx.font = `${weight} ${size}px system-ui`.trim();
+      fullLines = wrapTextLines(this.ctx, fullText, maxWidth).length;
+      if (fullLines * size * ratio <= maxHeight || size <= minSize) break;
+    }
+    const lineHeight = size * ratio, maxLines = Math.max(1, Math.floor(maxHeight / lineHeight));
+    const lines = wrapTextLines(this.ctx, displayText, maxWidth);
+    const shown = lines.slice(0, maxLines);
+    if (fullLines > maxLines && lines.length >= maxLines) shown[maxLines - 1] = `${Array.from(shown[maxLines - 1]!).slice(0, -1).join('')}…`;
+    this.ctx.textAlign = align;
+    shown.forEach((value, index) => this.ctx.fillText(value, x, y + index * lineHeight));
+  }
+
   private async drawDialogue(line: PerformanceLine, progress: number, localTime: number): Promise<void> {
     if (line.type === 'command') return;
     const displayText = revealText(line, localTime);
@@ -1308,7 +1367,7 @@ export class CanvasStageRenderer {
       this.ctx.fillStyle = 'rgba(10,12,17,.84)'; roundRect(this.ctx, x, y, w, h, 18); this.ctx.fill();
       this.ctx.strokeStyle = 'rgba(255,255,255,.13)'; this.ctx.stroke();
       this.ctx.fillStyle = '#e5eaf4'; this.ctx.font = `${Math.max(20, width * 0.019)}px system-ui`; this.ctx.textBaseline = 'top';
-      wrapText(this.ctx, displayText, width / 2, y + h * 0.22, w * 0.82, Math.max(30, height * 0.047), 4, 'center');
+      this.drawFittedText(displayText, line.text, width / 2, y + h * 0.22, w * 0.82, h * 0.72, Math.round(Math.max(20, width * 0.019)), Math.round(width * 0.0125), 1.39, 'center');
       return;
     }
     const margin = width * 0.055;
@@ -1329,7 +1388,7 @@ export class CanvasStageRenderer {
       if (meta.result && meta.target) { this.ctx.fillStyle = outcomeColor(meta.outcome); this.ctx.font = '800 34px ui-monospace,monospace'; this.ctx.textAlign = 'right'; this.ctx.fillText(`${meta.result} / ${meta.target}`, x + boxWidth - 34, y + 42); }
       this.ctx.fillStyle = '#f4f6fb'; this.ctx.font = '500 18px system-ui'; this.ctx.textAlign = 'left'; this.ctx.textBaseline = 'bottom'; wrapText(this.ctx, displayText, x + 34, y + boxHeight - 52, boxWidth - 68, 26, 2, 'left');
     } else {
-      this.ctx.fillStyle = '#f4f6fb'; this.ctx.font = '500 23px system-ui'; this.ctx.textAlign = 'left'; this.ctx.textBaseline = 'top'; wrapText(this.ctx, displayText, x + 28, y + 40, boxWidth - 56, 33, 3, 'left');
+      this.ctx.fillStyle = '#f4f6fb'; this.ctx.textBaseline = 'top'; this.drawFittedText(displayText, line.text, x + 28, y + 40, boxWidth - 56, boxHeight - 58, Math.round(width * 23 / 1280), Math.round(width * 15 / 1280), 1.43, 'left', '500');
     }
     this.ctx.fillStyle = 'rgba(255,255,255,.12)'; roundRect(this.ctx, x + 20, y + boxHeight - 14, boxWidth - 40, 4, 2); this.ctx.fill();
     this.ctx.fillStyle = accent; roundRect(this.ctx, x + 20, y + boxHeight - 14, (boxWidth - 40) * clamp(progress, 0, 1), 4, 2); this.ctx.fill();
@@ -1399,8 +1458,15 @@ export class CanvasStageRenderer {
           let viseme: Viseme = 'SILENCE';
           if (isCurrent) {
             if (line.mouth === 'off') viseme = 'SILENCE';
-            else if (line.mouthCues.length) viseme = visemeAt(line.mouthCues, localTime, this.performance.settings.mouthLeadMs);
-            else viseme = pseudoViseme(line.text, localTime, line.duration);
+            else {
+              // Cues and audio share a clock that starts when the voice actually starts.
+              const pre = Math.max(0, Number(line.audioMix?.preRoll) || 0), post = Math.max(0, Number(line.audioMix?.postRoll) || 0), offset = Number(line.audioMix?.voiceOffset) || 0;
+              const voiceStart = line.audioAssetId ? pre + offset : 0;
+              const mouthTime = localTime - voiceStart;
+              const lead = (Number(this.performance.settings.mouthLeadMs) || 0) / 1000;
+              if (line.mouthCues.length) viseme = mouthTime + lead < 0 ? 'SILENCE' : visemeAt(line.mouthCues, mouthTime, this.performance.settings.mouthLeadMs);
+              else if (mouthTime >= 0) viseme = pseudoViseme(line.text, mouthTime, line.audioAssetId ? Math.max(0.05, line.duration - pre - post - Math.max(0, offset)) : line.duration);
+            }
           }
           const blinking = blinkAt(character, localTime, isCurrent && OPEN_VISEMES.has(viseme), this.faceTemplateFor(character)?.layers);
           const selection = selectCharacterFrame(character, line.state.expressions[actor.characterId] ?? 'default', viseme, blinking);
@@ -1458,7 +1524,16 @@ export class CanvasStageRenderer {
     }
   }
 
-  async renderLine(index: number, localTime = 0): Promise<void> {
+  /** Frames run one at a time and a superseded request is skipped, so a slow old frame can't cover a newer one. */
+  renderLine(index: number, localTime = 0): Promise<void> {
+    const ticket = ++this.renderTicket;
+    const run = async (): Promise<void> => { if (ticket === this.renderTicket) await this.drawFrame(index, localTime); };
+    const result = this.renderTail.then(run, run);
+    this.renderTail = result.catch(() => {});
+    return result;
+  }
+
+  private async drawFrame(index: number, localTime: number): Promise<void> {
     this.customObjectHitRegions = [];
     const line = this.performance.lines[index];
     const { width, height } = this.canvas;
