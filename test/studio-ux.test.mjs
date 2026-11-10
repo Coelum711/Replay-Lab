@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
+const APP_VERSION = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version.replace(/\./g, '\\.');
 const studioHtml = await readFile(new URL('../web/studio.html', import.meta.url), 'utf8');
 const studioJs = await readFile(new URL('../web/studio.js', import.meta.url), 'utf8');
 const voiceHtml = await readFile(new URL('../web/index.html', import.meta.url), 'utf8');
@@ -60,7 +61,7 @@ test('Studio protects project-replacing actions and only shows batch checkboxes 
 });
 
 test('Voice workbench is task-focused and does not auto-create a sample project', () => {
-  assert.match(voiceHtml, /Replay Lab 0\.57\.0-dev · 声音/);
+  assert.match(voiceHtml, new RegExp(`Replay Lab ${APP_VERSION} · 声音`));
   assert.match(voiceHtml, /<details class="card" id="voiceInputDetails">/);
   assert.match(voiceHtml, /<details class="card"><summary>调试：Performance JSON<\/summary>/);
   assert.doesNotMatch(voiceJs.trimEnd(), /parse\(\);$/);
@@ -178,7 +179,7 @@ test('0.30 Studio exposes split left/right face assets and draggable perspective
 });
 
 test('0.26 character editor exposes optional English phoneme mouths without cluttering the default layer grid', () => {
-  assert.match(studioHtml, /Replay Lab Studio 0\.57\.0-dev/);
+  assert.match(studioHtml, new RegExp(`Replay Lab Studio ${APP_VERSION}`));
   assert.match(studioJs, /英语精细口型/);
   assert.match(studioJs, /mouthSchwa/);
   assert.match(studioJs, /mouthAe/);
@@ -388,7 +389,7 @@ test('0.44.3 Studio exposes human-readable batch punctuation timing instead of e
 });
 
 test('0.45 Studio exposes collapsible Director Beats and expression inheritance', () => {
-  assert.match(studioHtml, /Replay Lab Studio 0\.57\.0-dev/);
+  assert.match(studioHtml, new RegExp(`Replay Lab Studio ${APP_VERSION}`));
   assert.match(studioJs, /function makeScriptBeat/);
   assert.match(studioJs, /演出 ×\$\{row\.count\}/);
   assert.match(studioJs, /继承上一表情/);
