@@ -1,3 +1,4 @@
+import { stripTextTags } from '../core/text-tags.js';
 import type { ReplayCharacter, ReplayLine, ReplayProject, VoicePreset } from '../core/types.js';
 import type { ResolvedAccent } from '../pronunciation/types.js';
 import { resolveCharacterAccent, accentTranslationStyleKey } from '../pronunciation/accent.js';
@@ -38,7 +39,7 @@ export function resolveVoice(character: ReplayCharacter | undefined, targetLangu
   const voice: VoicePreset = { ...inherited, ...line.speech?.voice, ...line.speech?.acting };
   if (voice.mode !== 'auto') return voice;
   const acting = line.speech?.acting;
-  const expressive = !!(acting?.actingPreset || acting?.instruct?.trim() || line.speech?.persona?.trim());
+  const expressive = !!(acting?.actingPreset || acting?.instruct?.trim() || line.speech?.persona?.trim() || line.speech?.segments?.some(segment => segment.instruct?.trim()));
   // The bridge only runs the 1.7B pair; plain lines keep whatever size the character chose.
   return expressive ? { ...voice, mode: 'experimental-clone-instruct', modelSize: '1.7B' } : { ...voice, mode: 'stable-clone' };
 }
@@ -63,11 +64,11 @@ export function resolveSpeechPolicy(project: ReplayProject, line: ReplayLine): R
 
 export function resolveCachedSpeech(project: ReplayProject, line: ReplayLine): { text: string; language: string; translationPending: boolean } {
   const policy = resolveSpeechPolicy(project, line);
-  if (line.speech?.textOverride) return { text: line.speech.textOverride, language: policy.targetLanguage, translationPending: false };
+  if (line.speech?.textOverride) return { text: stripTextTags(line.speech.textOverride), language: policy.targetLanguage, translationPending: false };
   const cache = line.speech?.translationCache;
   const validCache = isTranslationCacheValid(line, policy);
   if (policy.shouldTranslate && validCache) return { text: cache!.text, language: policy.targetLanguage, translationPending: false };
-  return { text: line.text, language: policy.targetLanguage, translationPending: policy.shouldTranslate };
+  return { text: stripTextTags(line.text), language: policy.targetLanguage, translationPending: policy.shouldTranslate };
 }
 
 export function isTranslationCacheValid(line: ReplayLine, policy: ResolvedSpeechPolicy): boolean {

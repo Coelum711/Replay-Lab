@@ -240,3 +240,107 @@ test('the tone menu appends directions to the line instruction and can clear it'
   [...host.querySelectorAll('button')].find(b => b.textContent === '清空指令').click();
   assert.equal(line.speech.acting.instruct, '');
 });
+
+test('re-rolls queue one at a time and leave a notice until the line is opened', async () => {
+  const dom = new JSDOM('<div id="a"></div><div id="b"></div>', { url: 'http://localhost/' });
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, location: dom.window.location, localStorage: { getItem: () => null } });
+  const panel = await import('../web/line-take-panel.js?queue');
+  const project = StoryScriptImporter.parse('亚瑟：一 ||| いち\n亚瑟：二 ||| に', { title: 't' });
+  const arthur = project.characters.find(c => c.name === '亚瑟');
+  arthur.speech = { ...arthur.speech, voices: { ja: { provider: 'voicebox-local', voiceId: 'v', mode: 'stable-clone', modelSize: '0.6B' } } };
+  project.settings.speechLanguage = 'ja'; project.settings.logLanguage = 'zh';
+  let release, active = 0, peak = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  globalThis.fetch = async url => {
+    const path = String(url);
+    if (path.endsWith('/profiles')) return new Response(JSON.stringify([{ id: 'v', language: 'ja' }]), { headers: { 'Content-Type': 'application/json' } });
+    if (path.endsWith('/generate')) { active += 1; peak = Math.max(peak, active); await gate; active -= 1; return new Response(JSON.stringify({ id: 'g', status: 'completed', duration: 1 }), { headers: { 'Content-Type': 'application/json' } }); }
+    if (path.endsWith('/audio/g')) return new Response(new Uint8Array([1]), { headers: { 'Content-Type': 'audio/wav' } });
+    throw new Error(path);
+  };
+  const workspace = { write: async () => {}, saveProject: async () => {}, assertProjectCurrent: async () => {} };
+  const render = (id, line) => { const host = dom.window.document.getElementById(id); host.replaceChildren(); panel.renderLineTakePanel(host, { project, line, workspace, resolveAsset: async () => null, onChanged() {}, onEdit() {}, clearAudio() {}, bgmOptions: '', setBgm() {}, importBgm() {}, character: arthur }); return host; };
+  render('a', project.lines[0]).querySelector('[data-line-roll]').click();
+  const second = render('b', project.lines[1]);
+  second.querySelector('[data-line-roll]').click();
+  assert.match(render('b', project.lines[1]).textContent, /排队中 · 第 1 位/);
+  release();
+  for (let i = 0; i < 50 && panel.voiceNotice(project.lines[1].id) !== 'ok'; i += 1) await new Promise(r => setTimeout(r, 10));
+  assert.equal(peak, 1, 'only one generation runs at a time: ' + JSON.stringify([peak, panel.voiceNotice(project.lines[0].id), render('a', project.lines[0]).querySelector('.status')?.textContent]));
+  assert.equal(panel.voiceNotice(project.lines[0].id), 'ok');
+  assert.equal(panel.voiceNotice(project.lines[1].id), 'ok');
+  panel.clearVoiceNotice(project.lines[0].id);
+  assert.equal(panel.voiceNotice(project.lines[0].id), undefined);
+});
+
+test('a busy emotion bridge is waited for instead of failing the line', async () => {
+  const { VoiceboxLocalTtsProvider } = await import('../dist/index.js');
+  let calls = 0;
+  const wav = new Uint8Array(64); wav.set([82,73,70,70,0,0,0,0,87,65,86,69]);
+  const provider = new VoiceboxLocalTtsProvider({ pollIntervalMs: 1, fetchImpl: async (url, options = {}) => {
+    const path = String(url);
+    if (path.endsWith('/health')) return new Response(JSON.stringify({ service: 'replaylab-mlx-clone-bridge', protocol: 1, ready: true, voicebox_url: 'http://127.0.0.1:17493', capabilities: { clone_instruct: true, model_sizes: ['1.7B'] } }), { headers: { 'Content-Type': 'application/json' } });
+    if (path.endsWith('/synthesize')) {
+      calls += 1;
+      if (calls < 3) return new Response(JSON.stringify({ error: '情绪桥正在生成另一句，请等完成后重试。' }), { status: 409 });
+      return new Response(wav, { headers: { 'Content-Type': 'audio/wav', 'X-ReplayLab-Profile': 'v', 'X-ReplayLab-Injected': '1', 'X-ReplayLab-Duration': '1.5' } });
+    }
+    throw new Error(path);
+  } });
+  const result = await provider.synthesize({ voiceId: 'v', text: 'x', language: 'ja', modelSize: '1.7B', experimentalCloneInstruct: true });
+  assert.equal(calls, 3);
+  assert.equal(result.duration, 1.5);
+});
+
+test('/shake parses strength, seconds, rhythm and keeps shaking across later lines', async () => {
+  const { parseDirectorCommand, formatDirectorCommand, compilePerformance, createLine, screenShakeOffset } = await import('../dist/index.js').then(async m => ({ ...m, ...(await import('../dist/renderers/canvas-stage.js')) }));
+  const project = StoryScriptImporter.parse('亚瑟：一\n亚瑟：二\n亚瑟：三', { title: 't' });
+  const parse = text => parseDirectorCommand(project, text);
+  assert.deepEqual(parse('/shake 强 3 随机').command, { kind: 'shake', value: 'random 24 14', duration: 3 });
+  assert.deepEqual(parse('/shake 中 2 固定 8').command, { kind: 'shake', value: 'fixed 12 8', duration: 2 });
+  assert.deepEqual(parse('/shake 18 1.5').command, { kind: 'shake', value: 'random 18 14', duration: 1.5 });
+  assert.match(parse('/shake 很强').error, /写法/);
+  assert.equal(parse(formatDirectorCommand(project, parse('/shake 中 2 固定 8').command)).command.value, 'fixed 12 8');
+  for (const line of project.lines) line.duration = 1;
+  const command = createLine(project, 'Director', '/shake 强 2.5 随机', 'command');
+  command.command = parse('/shake 强 2.5 随机').command;
+  project.lines.splice(0, 0, command);
+  const lines = compilePerformance(project).lines;
+  assert.equal(lines[0].duration < 0.1, true, 'shake does not pause the script');
+  assert.equal(lines.filter(line => line.shakes?.length).length, 4, 'command plus the three lines it overlaps');
+  const second = lines[2];
+  assert.ok(screenShakeOffset(second.shakes, 0.1, 1280).reach > 0);
+  assert.equal(screenShakeOffset(second.shakes, 10, 1280), null, 'stops after its seconds');
+  assert.deepEqual(screenShakeOffset(second.shakes, 0.3, 1280), screenShakeOffset(second.shakes, 0.3, 1280), 'deterministic');
+});
+
+test('voice review queues re-rolls one at a time and marks finished lines until played', async () => {
+  const html = await readFile(new URL('../web/index.html', import.meta.url), 'utf8');
+  const dom = new JSDOM(html);
+  const { document: doc } = dom.window;
+  Object.assign(globalThis, { document: doc, Option: dom.window.Option });
+  const { createVoiceReview } = await import('../web/voice-review-controller.js');
+  const project = StoryScriptImporter.parse('亚瑟：一 ||| 一\n王耀：二 ||| 二\n马修：三 ||| 三', { title: 't' });
+  project.assets = project.lines.map((line, i) => ({ id: `a${i}`, kind: 'voice', name: 'x', metadata: { duration: 1 } }));
+  project.lines.forEach((line, i) => { line.audioAssetId = `a${i}`; });
+  const started = [], releases = [];
+  createVoiceReview({ root: doc, getProject: () => project, audioBlob: async () => null, isBusy: () => false,
+    regenerate: line => new Promise((resolve, reject) => { started.push(line.text); releases.push(line.text === '三' ? () => reject(new Error('坏了')) : resolve); }),
+    onChanged() {}, listTakes: () => [], activateTake: async () => {} });
+  doc.querySelector('#vrRefresh').click();
+  const rollOf = i => [...doc.querySelectorAll('#vrRows tr:not([hidden])')][i].querySelectorAll('button')[1];
+  rollOf(0).click(); rollOf(1).click(); rollOf(2).click();
+  await new Promise(r => setTimeout(r, 0));
+  assert.deepEqual(started, ['一'], 'only one runs at a time');
+  assert.equal(rollOf(1).textContent, '排队 1');
+  assert.equal(rollOf(1).disabled, true);
+  releases[0](); await new Promise(r => setTimeout(r, 0));
+  assert.deepEqual(started, ['一', '二']);
+  const dots = () => [...doc.querySelectorAll('#vrRows tr:not([hidden])')].map(tr => tr.querySelector('.voice-ready-dot')?.style.background || '');
+  assert.match(dots()[0], /255, 77, 94|#ff4d5e/);
+  releases[1](); await new Promise(r => setTimeout(r, 0));
+  releases[2](); await new Promise(r => setTimeout(r, 0));
+  assert.match(dots()[2], /255, 174, 66|#ffae42/, 'failed line gets an orange dot');
+  [...doc.querySelectorAll('#vrRows tr:not([hidden])')][0].querySelector('button').click();
+  assert.equal(dots()[0], '', 'playing the line clears its dot');
+});

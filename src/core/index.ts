@@ -10,3 +10,4 @@ export * from './beats.js';
 export * from './scene-graph.js';
 
 export * from './projection.js';
+export * from './text-tags.js';

@@ -1,3 +1,6 @@
+import { activeSegments } from './segments.js';
+import { decodeWav, encodeWav, joinSegments, timeStretch, trimSilence, type MonoPcm } from './segment-audio.js';
+import { stripTextTags } from '../core/text-tags.js';
 import type { ReplayLine, ReplayProject, ProsodyPoint } from '../core/types.js';
 import { assertProsodyReenactment, normalizeProsodyCurve, prosodyInstruction } from './prosody.js';
 import type { TranslationRegistry } from '../translation/registry.js';
@@ -59,7 +62,7 @@ export async function prepareLineSpeech(project: ReplayProject, line: ReplayLine
   assertCurrent();
   const inputFingerprint = speechInputFingerprint(project, line);
   const displayText = line.text;
-  let speechText = line.speech?.textOverride || line.text;
+  let speechText = stripTextTags(line.speech?.textOverride || line.text);
   let translated = false;
   const translationStyleKey = accentTranslationStyleKey(policy.accent);
   const boundAudio = line.audioAssetId ? project.assets.find(asset => asset.id === line.audioAssetId) : undefined;
@@ -83,7 +86,7 @@ export async function prepareLineSpeech(project: ReplayProject, line: ReplayLine
       if (!provider) throw new Error(`Translation provider not registered: ${providerId}`);
       const result = await provider.translate({
         signal: options.signal,
-        text: line.text,
+        text: stripTextTags(line.text),
         sourceLanguage: policy.sourceLanguage,
         targetLanguage: policy.targetLanguage,
         accent: accentTranslationHint(policy.accent)
@@ -116,10 +119,11 @@ export async function prepareLineSpeech(project: ReplayProject, line: ReplayLine
       throw new Error(`${kind} TTS provider not registered: ${providerId}`);
     }
     const pauseScale = resolveSpeechPauseScale(project, line);
-    const requestText = providerId === REPLAYLAB_FREE_TTS_ID ? speechText : speechTextForGenericTts(speechText);
-    ttsResult = await provider.synthesize({
+    const personaParts = [line.speech?.persona?.trim() && line.speech.personaReplacesCharacter ? undefined : project.characters.find(character => character.id === line.speakerId)?.speech?.persona?.trim(), line.speech?.persona?.trim()];
+    const lineTone = [policy.voice.actingPreset && `${policy.voice.actingStrength || 'natural'} intensity: ${policy.voice.actingPreset}`, policy.voice.instruct];
+    const synthesizePart = (text: string, tone: Array<string | undefined | false | null>) => provider.synthesize({
       signal: options.signal,
-      text: requestText,
+      text: providerId === REPLAYLAB_FREE_TTS_ID ? text : speechTextForGenericTts(text),
       language: policy.targetLanguage === 'auto' ? undefined : policy.targetLanguage,
       voiceId: policy.voice.voiceId,
       rate: policy.voice.rate,
@@ -127,12 +131,26 @@ export async function prepareLineSpeech(project: ReplayProject, line: ReplayLine
       accent: accentSynthesisHint(policy.accent),
       pauseScale,
       punctuationPauses: resolvePunctuationPauseTiming(project, line),
-      instruct: [line.speech?.persona?.trim() && line.speech.personaReplacesCharacter ? undefined : project.characters.find(character => character.id === line.speakerId)?.speech?.persona?.trim(), line.speech?.persona?.trim(), policy.voice.actingPreset && `${policy.voice.actingStrength || 'natural'} intensity: ${policy.voice.actingPreset}`, policy.voice.instruct,
-        options.prosodyReenactment && prosodyInstruction(options.prosodyReenactment,speechText)].filter(Boolean).join('. ') || undefined,
+      instruct: [...personaParts, ...tone].filter(Boolean).join('. ') || undefined,
       seed: policy.voice.seed,
       modelSize: policy.voice.modelSize,
       experimentalCloneInstruct: policy.voice.mode === 'experimental-clone-instruct'
     });
+    const segments = options.prosodyReenactment ? null : activeSegments(line, speechText);
+    if (segments) {
+      // Each part gets its own tone; speed and pauses are applied here so they land exactly.
+      const parts: Array<{ pcm: MonoPcm; pauseAfter?: number }> = [];
+      for (const segment of segments) {
+        const result = await synthesizePart(segment.text, segment.instruct?.trim() ? [segment.instruct.trim()] : lineTone);
+        assertCurrent();
+        const bytes = result.audio instanceof Uint8Array ? result.audio : result.audio instanceof ArrayBuffer ? new Uint8Array(result.audio) : new Uint8Array(await (result.audio as Blob).arrayBuffer());
+        parts.push({ pcm: timeStretch(trimSilence(decodeWav(bytes)), segment.speed ?? 1), pauseAfter: segment.pauseAfter });
+      }
+      const joined = joinSegments(parts);
+      ttsResult = { audio: encodeWav(joined), mime: 'audio/wav', duration: joined.samples.length / joined.sampleRate };
+    } else {
+      ttsResult = await synthesizePart(speechText, [...lineTone, options.prosodyReenactment && prosodyInstruction(options.prosodyReenactment, speechText)]);
+    }
     assertCurrent();
     audioSource = providerId === REPLAYLAB_FREE_TTS_ID ? 'builtin-tts' : 'external-tts';
     if (ttsResult.phonemes?.length && !options.prosodyReenactment) {

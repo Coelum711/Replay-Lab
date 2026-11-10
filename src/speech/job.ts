@@ -12,7 +12,7 @@ export class StaleSpeechError extends Error {
 /** Excludes generated caches. Changes to any effective synthesis input invalidate a job. */
 export function speechInputFingerprint(project: ReplayProject, line: ReplayLine): string {
   return JSON.stringify({ text: line.text, speakerId: line.speakerId, type: line.type,
-    textOverride: line.speech?.textOverride, policy: resolveSpeechPolicy(project, line),
+    textOverride: line.speech?.textOverride, segments: line.speech?.segments ?? null, policy: resolveSpeechPolicy(project, line),
     pauseScale: resolveSpeechPauseScale(project, line), pauses: resolvePunctuationPauseTiming(project, line) });
 }
 

@@ -8,6 +8,8 @@ export interface VoiceboxLocalTtsOptions {
   fetchImpl?: typeof fetch;
   pollIntervalMs?: number;
   timeoutMs?: number;
+  /** How long to wait while the bridge is rendering a line for someone else. */
+  bridgeBusyWaitMs?: number;
 }
 
 function trimBaseUrl(value: string): string { return value.replace(/\/+$/, ''); }
@@ -91,6 +93,7 @@ export class VoiceboxLocalTtsProvider implements TtsProvider {
   private readonly fetchImpl: typeof fetch;
   private readonly pollIntervalMs: number;
   private readonly timeoutMs: number;
+  private readonly bridgeBusyWaitMs: number;
 
   constructor(options: VoiceboxLocalTtsOptions = {}) {
     this.baseUrl = trimBaseUrl(options.baseUrl || 'http://127.0.0.1:17493');
@@ -98,6 +101,7 @@ export class VoiceboxLocalTtsProvider implements TtsProvider {
     this.fetchImpl = options.fetchImpl || globalThis.fetch.bind(globalThis);
     this.pollIntervalMs = options.pollIntervalMs ?? 700;
     this.timeoutMs = options.timeoutMs ?? 20 * 60_000;
+    this.bridgeBusyWaitMs = options.bridgeBusyWaitMs ?? 10 * 60_000;
   }
 
   private async callVoicebox(url: string, init: RequestInit): Promise<Response> {
@@ -180,13 +184,21 @@ export class VoiceboxLocalTtsProvider implements TtsProvider {
     const status = await this.bridgeHealth(request.signal);
     if (!status.ready) throw new Error('情绪桥运行环境或 1.7B 模型缓存未就绪。打开桥状态页检查；没有自动下载，也没有退回其他声音。');
     if (!status.capabilities.model_sizes?.includes(request.modelSize)) throw new Error('情绪桥不支持所选模型尺寸。');
-    const response = await this.callBridge(`${this.bridgeUrl}/synthesize`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-ReplayLab-Bridge': '1' },
-      signal: request.signal ? AbortSignal.any([request.signal,AbortSignal.timeout(20*60_000)]) : AbortSignal.timeout(20 * 60_000),
-      body: JSON.stringify({ profile_id: request.voiceId, text: request.text, language: baseLanguage(request.language),
-        model_size: request.modelSize, instruct: instructions, seed: request.seed })
-    });
-    if (!response.ok) throw new Error(`情绪桥生成失败：${(await response.text()).slice(0, 1200)}`);
+    // The bridge renders one line at a time and refuses others; another window may be using it, so wait instead of failing.
+    const waitUntil = Date.now() + this.bridgeBusyWaitMs;
+    let response: Response;
+    for (;;) {
+      response = await this.callBridge(`${this.bridgeUrl}/synthesize`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-ReplayLab-Bridge': '1' },
+        signal: request.signal ? AbortSignal.any([request.signal,AbortSignal.timeout(20*60_000)]) : AbortSignal.timeout(20 * 60_000),
+        body: JSON.stringify({ profile_id: request.voiceId, text: request.text, language: baseLanguage(request.language),
+          model_size: request.modelSize, instruct: instructions, seed: request.seed })
+      });
+      if (response.ok) break;
+      const detail = (await response.text()).slice(0, 1200);
+      if (!/正在生成另一句/.test(detail) || Date.now() > waitUntil) throw new Error(`情绪桥生成失败：${detail}`);
+      await delay(this.pollIntervalMs * 4, request.signal ?? AbortSignal.timeout(60_000));
+    }
     if (response.headers.get('X-ReplayLab-Profile') !== request.voiceId || response.headers.get('X-ReplayLab-Injected') !== '1') {
       throw new Error('情绪桥未确认该 Profile 的声纹注入；拒绝采用返回音频。');
     }

@@ -11,7 +11,7 @@ import { backupBeforeRecovery, isRecoveryWorkspace } from './recovery-workspace.
 import { createExportSession } from './export-session.js';
 import './desktop-client.js';
 import { VirtualScriptList } from './virtual-script-list.js';
-import { renderLineTakePanel } from './line-take-panel.js';
+import { renderLineTakePanel, onVoiceQueueChange, voiceNotice, clearVoiceNotice } from './line-take-panel.js';
 import { CustomObjectEditorController } from './custom-object-editor-controller.js';
 import { AudioWorkbenchController } from './audio-workbench-controller.js';
 import {
@@ -447,7 +447,7 @@ function makeScriptLine(rowData){
   const isCommand=line.type==='command';
   const row=document.createElement('div');row.className='line-item'+(isCommand?' command':'')+(rowData.active?' active':'')+(rowData.selected?' multi':'')+(rowData.hit?' hit':'');row.tabIndex=0;row.draggable=true;row.dataset.lineId=line.id;
   const speakerLabel=isCommand?'◆ 指令':charName(line.speakerId);
-  row.innerHTML=`<label class="mini-check"><input type="checkbox" aria-label="选择第 ${index+1} 行" ${rowData.selected?'checked':''}></label><span>${index+1}</span><b title="${escapeHtml(speakerLabel)}">${escapeHtml(speakerLabel)}</b><span class="text" title="${escapeHtml(line.text)}">${escapeHtml(line.text)}</span>`;
+  row.innerHTML=`<label class="mini-check"><input type="checkbox" aria-label="选择第 ${index+1} 行" ${rowData.selected?'checked':''}></label><span>${index+1}${voiceNotice(line.id)?`<i class="voice-ready-dot" title="${voiceNotice(line.id)==='ok'?'新配音已生成，点开查看':'配音生成失败，点开查看原因'}" style="display:inline-block;width:8px;height:8px;margin-left:4px;border-radius:50%;vertical-align:middle;background:${voiceNotice(line.id)==='ok'?'#ff4d5e':'#ffae42'}"></i>`:''}</span><b title="${escapeHtml(speakerLabel)}">${escapeHtml(speakerLabel)}</b><span class="text" title="${escapeHtml(line.text)}">${escapeHtml(line.text)}</span>`;
   const check=row.querySelector('input');check.onclick=e=>{e.stopPropagation();if(e.shiftKey&&lastSelectionIndex!==null){const a=Math.min(lastSelectionIndex,index),b=Math.max(lastSelectionIndex,index);for(let i=a;i<=b;i++)selectedLineIds.add(project.lines[i].id)}else if(check.checked)selectedLineIds.add(line.id);else selectedLineIds.delete(line.id);lastSelectionIndex=index;updateSelectionUi();renderScript()};
   const activate=()=>{player?.stop();selectedBeatId=null;selectedIndex=index;renderAll();scrollActiveLineIntoView()};row.onclick=e=>{if(e.target.closest('input'))return;activate()};row.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();activate()}};
   row.ondragstart=e=>{if(!selectedLineIds.has(line.id)){selectedLineIds.clear();selectedLineIds.add(line.id);updateSelectionUi()}row.classList.add('dragging');e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/replay-line-ids',JSON.stringify([...selectedLineIds]))};
@@ -692,6 +692,7 @@ function renderCharacters(){
     <details><summary>身份 / 导入别名 <span class="summary-meta">${(character.aliases||[]).length?`${character.aliases.length} 个`:'可选'}</span></summary><div class="disclosure-body"><label class="muted">别名 / 导入名<input data-aliases value="${escapeHtml((character.aliases||[]).join(', '))}" placeholder="例如 Matthew, 马修"></label><div class="muted">只用于识别同一角色的不同导入名；不会改显示名称，也不会自动翻译角色名。</div></div></details>
     <details><summary>声音 / AI 朗读（可选） <span class="summary-meta" data-character-speech-summary></span></summary><div class="stack disclosure-body"><div class="grid2"><label class="muted">默认朗读语言<input data-character-language list="studioLanguageOptions" value="${escapeHtml(character.speech?.defaultLanguage||'')}" placeholder="留空 = 工程朗读语言"></label><label class="muted">停顿强度 <span data-character-pause-value class="summary-meta"></span><input data-character-pause type="range" min="0" max="3" step="0.1" value="${Number(character.speech?.pauseScale??project.settings.speechPauseScale??1).toFixed(1)}"></label></div><div class="grid2"><label class="muted">口音 / 地区<input data-character-accent value="" placeholder="例如 London / Cockney / Texas / 伦敦"></label><label class="muted">口音强度<select data-character-accent-strength><option value="off">关闭</option><option value="light">轻微</option><option value="natural">自然</option><option value="strong">明显</option></select></label></div><div data-character-accent-results class="stack"></div><div data-character-accent-current class="compact-note"></div><div class="row"><button type="button" data-character-pause-reset class="small">停顿继承全局</button><button type="button" data-character-open-voice class="small">打开声音工作台 / 选 Voice</button></div><div class="muted">常用设置直接放在角色页；完整 Voice 试听、批量生成和高级口音规则在声音工作台。</div></div></details>
     <div class="grid2"><label class="muted">允许自动上镜 <input data-show type="checkbox" ${character.showOnStage?'checked':''}></label><label class="muted">默认站位<select data-pos>${['auto','left','center','right'].map(v=>`<option value="${v}" ${character.defaultPosition===v?'selected':''}>${positionLabel(v)}</option>`).join('')}</select></label></div>
+    <label class="muted" title="没有配音的台词逐字出现时发出的短促提示音">打字音<select data-blip>${BLIP_PRESETS.map(([key,label])=>`<option value="${key}" ${blipKey(character)===key?'selected':''}>${label}</option>`).join('')}</select></label>
     <label class="row"><input type="checkbox" data-asymmetric-facing ${character.stageFacing.policy==='paired'?'checked':''}><span><strong>这个角色左右不对称</strong><small class="muted" style="display:block">通常不用勾。普通立绘默认可左右镜像；只有伤疤、徽章、眼罩、单侧配件等需要保留方向时，才分别提供左右两版。</small></span></label><div class="muted">未勾选时，舞台上的 ⇆ 只做人工镜像；自动构图不会擅自改变朝向。勾选后改为 L/R 独立素材，系统切换素材而不镜像像素。</div>
     ${character.stageFacing.policy==='paired'?`<div class="card stack paired-facing-assets"><div class="row"><strong>左右独立立绘</strong><span class="muted">未绑定的部分自动继承通用素材</span></div><div class="grid2"><label class="muted">朝画面左 · 角色底图<select data-paired-layer="left:base">${imageAssetOptions(character.stageFacing.variants?.left?.layers?.base)}</select></label><label class="muted">朝画面右 · 角色底图<select data-paired-layer="right:base">${imageAssetOptions(character.stageFacing.variants?.right?.layers?.base)}</select></label></div><details class="advanced-only"><summary>旧式整帧立绘左右版本</summary><div class="grid2 disclosure-body"><label class="muted">朝左 · IDLE<select data-paired-image="left:idle">${imageAssetOptions(character.stageFacing.variants?.left?.images?.idle)}</select></label><label class="muted">朝右 · IDLE<select data-paired-image="right:idle">${imageAssetOptions(character.stageFacing.variants?.right?.images?.idle)}</select></label></div></details><div class="muted">在“可视化摆放”里点 L/R 决定这一时刻使用哪一套；后续行会继承这个方向，系统不会自行交换。</div></div>`:''}
     <div class="grid2"><label class="muted">立绘构图<select data-framing>${[['auto','自动'],['portrait','头像'],['bust','胸像'],['half','半身'],['full','全身']].map(([v,l])=>`<option value="${v}" ${character.puppet.layout.framing===v?'selected':''}>${l}</option>`).join('')}</select></label><label class="muted">角色缩放<input data-puppet-scale type="number" min="0.25" max="3" step="0.05" value="${Number(character.puppet.layout.scale??1).toFixed(2)}"></label></div>
@@ -708,6 +709,7 @@ function renderCharacters(){
   character.speech??={defaultLanguage:null,voices:{},accents:{}};character.speech.voices??={};character.speech.accents??={};
   new CharacterSpeechController({project,escapeHtml,searchAccents,getAccentProfile,normalizeNameKey:normalizeCharacterNameKey,scheduleSave,openVoice:openVoiceWorkbench,setStatus:message=>{$('#importStatus').textContent=message},hasWorkspace:()=>!!workspace}).mount(card,character);
   card.querySelector('[data-kind]').onchange=e=>{character.kind=e.target.value;scheduleSave('修改角色类型',`character-kind:${character.id}`);renderAll()};
+  card.querySelector('[data-blip]').onchange=e=>{const preset=BLIP_VOICES[e.target.value];character.textBlip=preset?{...preset}:null;scheduleSave('修改打字音',`${character.id}:blip`);compile();renderAll()};
   card.querySelector('[data-show]').onchange=e=>{character.showOnStage=e.target.checked;scheduleSave();renderAll()};
   card.querySelector('[data-pos]').onchange=e=>{character.defaultPosition=e.target.value;scheduleSave();renderAll()};
   card.querySelector('[data-asymmetric-facing]').onchange=e=>{character.stageFacing.policy=e.target.checked?'paired':'flippable';character.stageFacing.nativeFacing='left';scheduleSave(e.target.checked?'启用左右不对称立绘':'使用普通可镜像立绘',`character-facing:${character.id}`);renderAll()};
@@ -844,7 +846,7 @@ function renderMediaDefinitions(){
 function renderStageControls(line){
   $('#autoStageModeEdit').value=project.settings.autoStageMode||'vn-continuity';
   $('#maxOnStageEdit').value=String(project.settings.maxOnStage||2);
-  $('#speakerFocusEdit').value=project.settings.dimOthers===false?'none':(project.settings.speakerFocus||'subtle');
+  $('#speakerFocusEdit').value=project.settings.dimOthers===false?'none':(project.settings.speakerFocus||'subtle');if($('#speakerHopEdit'))$('#speakerHopEdit').checked=project.settings.speakerHop!==false;
   $('#stageModeEdit').value=line.stageMode||'auto';
   const custom=line.stageIds||[];
   checkboxList('customStage',custom,(id,checked)=>{line.stageIds??=[];if(checked&&!line.stageIds.includes(id))line.stageIds.push(id);if(!checked)line.stageIds=line.stageIds.filter(x=>x!==id);scheduleSave();renderAll()});
@@ -919,7 +921,7 @@ function renderCommandStructuredEditor(line,result){
     row.innerHTML=`<label>镜头效果<select data-command-value>${['none','push','shake','focus-speaker'].map(v=>`<option value="${v}" ${v===command.value?'selected':''}>${v}</option>`).join('')}</select></label>`;
     bind('[data-command-value]',el=>setDirectorCommand(line,{...command,value:el.value}));
   }else if(command.kind==='transition'){
-    row.innerHTML=`<label>转场<select data-command-value>${['cut','fade'].map(v=>`<option value="${v}" ${v===command.value?'selected':''}>${v}</option>`).join('')}</select></label>`;
+    row.innerHTML=`<label>转场<select data-command-value>${TRANSITION_OPTIONS.map(([v,label])=>`<option value="${v}" ${v===command.value?'selected':''}>${label}</option>`).join('')}</select></label>`;
     bind('[data-command-value]',el=>setDirectorCommand(line,{...command,value:el.value}));
   }
   host.append(row);
@@ -929,6 +931,10 @@ function preferredDirectorCharacter(){
   const current=currentLine();const currentChar=project.characters.find(c=>c.id===current?.speakerId&&c.showOnStage);
   return currentChar||project.characters.find(c=>c.showOnStage)||project.characters[0]||null;
 }
+const TRANSITION_OPTIONS=[['cut','直接切换'],['fade','黑场淡入'],['dissolve','溶解（交叉淡化）'],['wipe-left','向左擦除'],['wipe-right','向右擦除'],['wipe-up','向上擦除'],['wipe-down','向下擦除'],['iris-in','圆形展开'],['iris-out','圆形收缩'],['blinds','百叶窗'],['noise','碎点溶解']];
+const BLIP_VOICES={high:{pitch:880,wave:'square'},mid:{pitch:560,wave:'square'},low:{pitch:300,wave:'triangle'},soft:{pitch:660,wave:'sine'},robot:{pitch:420,wave:'sawtooth'}};
+const BLIP_PRESETS=[['off','关（无声打字）'],['high','高 · 尖细'],['mid','中 · 普通'],['low','低 · 厚重'],['soft','柔和'],['robot','机械 · 系统音']];
+function blipKey(character){const b=character.textBlip;if(!b)return 'off';return Object.keys(BLIP_VOICES).find(k=>BLIP_VOICES[k].pitch===b.pitch&&BLIP_VOICES[k].wave===b.wave)||'mid'}
 function directorTemplate(kind){
   const c=preferredDirectorCharacter(),name=c?.name||'角色名';
   const quote=v=>/\s/.test(v)?`"${v}"`:v;
@@ -948,6 +954,11 @@ function directorTemplate(kind){
   if(kind==='camera')return '/camera push';
   if(kind==='wait')return '/wait 0.5';
   if(kind==='flash')return '/flash black 0.5';
+  if(kind==='shake')return '/shake 中 2 随机';
+  if(kind==='emote')return `/emote ${quote(name)} 怒 1.6`;
+  if(kind==='filter')return '/filter 回忆';
+  if(kind==='card')return '/card 第一话 "副标题" 2.6';
+  if(kind==='transition')return '/transition 圆开';
   return '/';
 }
 function insertDirectorCommand(kind){
@@ -985,8 +996,10 @@ function renderBeatInspector(beat){
   for(const button of block.querySelectorAll('[data-beat-add]'))button.onclick=()=>insertDirectorCommandIntoBeat(button.dataset.beatAdd,beat);
 }
 
+onVoiceQueueChange(()=>{if(project)renderScript()});
 function renderInspectorTakes(){
   const takeHost=$('#lineTakeHost');if(!takeHost)return;takeHost.replaceChildren();const line=currentLine();if(!project||!line||line.type==='command'||selectedBeatId)return;
+  clearVoiceNotice(line.id);
   renderLineTakePanel(takeHost,{project,line,workspace,resolveAsset,character:project.characters.find(c=>c.id===line.speakerId),
     clearAudio(id,blob){if(blob)runtimeFiles.set(id,blob);else runtimeFiles.delete(id);invalidateMediaCaches()},
     onEdit(label){scheduleSave(label,`${line.id}:voice-edit`)},
@@ -1136,7 +1149,7 @@ function setContentView(view,{persist=true,render=true}={}){
 function renderAll(){if(!project)return;selectedIndex=Math.max(0,Math.min(selectedIndex,Math.max(0,project.lines.length-1)));refreshSearch();compile();updateToolbarOptions();renderCurrentView();renderInspector();stageDirectEditor?.render();cameraDirectEditor?.render();sceneViewport?.render();renderStageQuickControls();renderVoiceLineWorkbench();audioWorkbench?.render();updateSelectionUi();updateHistoryUi();void renderPreviewStatic();emitProjectState()}
 
 function bindEdit(id,fn,event='change',fullRender=true){$('#'+id).addEventListener(event,()=>{const line=currentLine();if(!line)return;fn(line,$('#'+id).value);scheduleSave('编辑台词',`${line.id}:${id}`);if(fullRender)renderAll()})}
-bindEdit('speakerEdit',(l,v)=>l.speakerId=v);bindEdit('typeEdit',(l,v)=>{l.type=v;if(v==='command'){l.text=l.text.startsWith('/')?l.text:'/wait 0';l.mouth='off';syncCommandLine(l)}else l.command=null;if(v==='dice')l.diceRolls??=[];if(v==='hitpoint')ensureHitPoint(l);if(v==='wheel'){l.wheel??={title:'转盘',mode:'history',steps:[{title:'转盘',options:[{id:'a',label:'A',weight:1},{id:'b',label:'B',weight:1}],resultId:'a',resultLabel:'A'}],blockingAuto:false};l.mouth='off';l.duration??=2.8}if(v==='bubble'){ensureBubble(l);l.mouth='off'}});bindEdit('durationEdit',(l,v)=>l.duration=v===''?null:Number(v));bindEdit('textEdit',(l,v)=>{l.text=v;if(l.type==='command')syncCommandLine(l);if(l.type==='bubble')ensureBubble(l).mainText=v},'input',false);$('#textEdit').addEventListener('change',()=>renderAll());bindEdit('expressionEdit',(l,v)=>{if(v==='__inherit__'){l.expressionMode='inherit';return}l.expressionMode='set';l.expression=v});bindEdit('mouthEdit',(l,v)=>l.mouth=v);bindEdit('sfxEdit',(l,v)=>l.sfxAssetId=v||null);bindEdit('textEffectEdit',(l,v)=>l.textEffect=v);bindEdit('textEffectDurationEdit',(l,v)=>l.textEffectDuration=v===''?null:Number(v));
+bindEdit('speakerEdit',(l,v)=>l.speakerId=v);bindEdit('typeEdit',(l,v)=>{l.type=v;if(v==='command'){l.text=l.text.startsWith('/')?l.text:'/wait 0';l.mouth='off';syncCommandLine(l)}else l.command=null;if(v==='dice')l.diceRolls??=[];if(v==='hitpoint')ensureHitPoint(l);if(v==='wheel'){l.wheel??={title:'转盘',mode:'history',steps:[{title:'转盘',options:[{id:'a',label:'A',weight:1},{id:'b',label:'B',weight:1}],resultId:'a',resultLabel:'A'}],blockingAuto:false};l.mouth='off';l.duration??=2.8}if(v==='bubble'){ensureBubble(l);l.mouth='off'}});bindEdit('durationEdit',(l,v)=>l.duration=v===''?null:Number(v));bindEdit('textEdit',(l,v)=>{l.text=v;if(l.type==='command')syncCommandLine(l);if(l.type==='bubble')ensureBubble(l).mainText=v},'input',false);$('#textEdit').addEventListener('change',()=>renderAll());for(const button of document.querySelectorAll('[data-text-tag]'))button.addEventListener('click',()=>{const box=$('#textEdit'),tag=button.dataset.textTag,start=box.selectionStart??box.value.length,end=box.selectionEnd??start;const picked=box.value.slice(start,end)||'文字';box.value=`${box.value.slice(0,start)}{${tag}}${picked}{/${tag}}${box.value.slice(end)}`;box.focus();box.setSelectionRange(start+tag.length+2,start+tag.length+2+picked.length);box.dispatchEvent(new Event('input'));box.dispatchEvent(new Event('change'))});bindEdit('expressionEdit',(l,v)=>{if(v==='__inherit__'){l.expressionMode='inherit';return}l.expressionMode='set';l.expression=v});bindEdit('mouthEdit',(l,v)=>l.mouth=v);bindEdit('sfxEdit',(l,v)=>l.sfxAssetId=v||null);bindEdit('textEffectEdit',(l,v)=>l.textEffect=v);bindEdit('textEffectDurationEdit',(l,v)=>l.textEffectDuration=v===''?null:Number(v));
 $('#lineLanguageEdit').addEventListener('change',()=>{const l=currentLine();if(!l)return;l.speech??={};l.speech.languageOverride=$('#lineLanguageEdit').value.trim()||null;scheduleSave('修改本句朗读语言',`${l.id}:speech-language`);renderAll()});$('#speechTextEdit').addEventListener('change',()=>{const l=currentLine();if(!l)return;l.speech??={};l.speech.textOverride=$('#speechTextEdit').value||null;scheduleSave('修改本句朗读文本',`${l.id}:speech-text`);renderAll()});$('#linePauseScaleEdit').addEventListener('input',()=>{const l=currentLine();if(!l)return;l.speech??={};l.speech.pauseScale=Number($('#linePauseScaleEdit').value);$('#linePauseScaleValue').textContent=`${Number(l.speech.pauseScale).toFixed(1)}×`;scheduleSave('修改本句停顿强度',`${l.id}:speech-pause`)});
 $('#linePauseReset').onclick=()=>{const l=currentLine();if(!l)return;l.speech??={};delete l.speech.pauseScale;scheduleSave('恢复本句停顿继承',`${l.id}:speech-pause-reset`);renderInspector()};
 bindEdit('dialogueStyleEdit',(l,v)=>l.dialogueStyleId=v||null);bindEdit('bubbleDefinitionEdit',(l,v)=>ensureBubble(l).definitionId=v||null);bindEdit('bubbleHeaderEdit',(l,v)=>ensureBubble(l).headerText=v);bindEdit('bubbleMainEdit',(l,v)=>{const b=ensureBubble(l);b.mainText=v;l.text=v},'input',false);$('#bubbleMainEdit').addEventListener('change',()=>renderAll());
@@ -1180,6 +1193,7 @@ for(const id of ['cgMaskKind','cgMaskAsset','cgMaskAnimation','cgMaskInvert'])$(
 bindEdit('cameraEdit',(l,v)=>{l.scene??={};l.scene.camera=v});bindEdit('transitionEdit',(l,v)=>{l.scene??={};l.scene.transition=v});bindEdit('cameraCurveEdit',(l,v)=>{l.scene??={};l.scene.cameraCurve=v});bindEdit('transitionCurveEdit',(l,v)=>{l.scene??={};l.scene.transitionCurve=v});bindEdit('backgroundMethodEdit',(l,v)=>{l.scene??={};l.scene.backgroundMethod=v});bindEdit('backgroundMethodDurationEdit',(l,v)=>{l.scene??={};l.scene.backgroundMethodDuration=v===''?null:Number(v)});bindEdit('stageModeEdit',(l,v)=>{if(v==='custom'&&!(l.stageIds?.length)){const stage=currentPerf()?.stage||[];l.stageIds=stage.map(actor=>actor.characterId);l.stagePositions=Object.fromEntries(stage.map(actor=>[actor.characterId,actor.position]))}l.stageMode=v});
 $('#autoStageModeEdit').addEventListener('change',()=>{if(!project)return;project.settings.autoStageMode=$('#autoStageModeEdit').value;scheduleSave('修改自动立绘调度','auto-stage-mode');renderAll()});
 $('#maxOnStageEdit').addEventListener('change',()=>{if(!project)return;project.settings.maxOnStage=Math.max(1,Math.min(3,Number($('#maxOnStageEdit').value)||2));scheduleSave('修改自动同屏人数','auto-stage-count');renderAll()});
+$('#speakerHopEdit')?.addEventListener('change',()=>{if(!project)return;project.settings.speakerHop=$('#speakerHopEdit').checked;scheduleSave('修改说话跳动','speaker-hop');compile();renderAll()});
 $('#speakerFocusEdit').addEventListener('change',()=>{if(!project)return;const value=$('#speakerFocusEdit').value;project.settings.speakerFocus=value;project.settings.dimOthers=value!=='none';scheduleSave('修改说话人焦点','speaker-focus');renderAll()});
 bindEdit('stageMethodEdit',(l,v)=>{if(!v.trim()){l.stageMethod=null;return}l.stageMethod={name:v.trim(),duration:l.stageMethod?.duration??0.5}});bindEdit('stageMethodDurationEdit',(l,v)=>{if(v===''&&!l.stageMethod)return;l.stageMethod??={name:'replace',duration:0.5};l.stageMethod.duration=v===''?0.5:Number(v)});
 $('#diceRollsEdit').addEventListener('change',()=>{const l=currentLine();if(!l)return;l.diceRolls=parseDiceRollsEditor($('#diceRollsEdit').value);scheduleSave('编辑骰点演出',`${l.id}:dice`);renderAll()});

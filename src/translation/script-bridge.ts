@@ -1,3 +1,4 @@
+import { stripTextTags } from '../core/text-tags.js';
 import type { ReplayProject } from '../core/types.js';
 
 export interface BridgeLine {
@@ -38,7 +39,7 @@ export function collectBridgeLines(project: ReplayProject): BridgeLine[] {
       lineId: line.id,
       speakerId: line.speakerId,
       speaker: project.characters.find(character => character.id === line.speakerId)?.name || '未知角色',
-      text: line.text,
+      text: stripTextTags(line.text),
       existing: line.speech?.textOverride || ''
     }];
   });

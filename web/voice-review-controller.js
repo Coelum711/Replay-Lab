@@ -2,6 +2,8 @@
 export function createVoiceReview({ root, getProject, audioBlob, isBusy, regenerate, onChanged, listTakes, activateTake }) {
   const $ = selector => root.querySelector(selector);
   let rows = [], playing = null, objectUrl = null, sequence = false, stopRegen = false;
+  // Re-rolls wait in line one at a time; a finished line keeps a dot until it is played or opened.
+  const queue = [], notices = new Map(); let running = null;
 
   const state = (text, kind = '') => { $('#vrState').className = `speech-status ${kind}`; $('#vrState').textContent = text; };
   const assetOf = line => getProject()?.assets.find(asset => asset.id === line.audioAssetId);
@@ -36,19 +38,32 @@ export function createVoiceReview({ root, getProject, audioBlob, isBusy, regener
   function renderRow(line) {
     const project = getProject(), tr = document.createElement('tr'), duration = Number(assetOf(line)?.metadata?.duration) || 0;
     const play = document.createElement('button'); play.textContent = '▶'; play.setAttribute('aria-label', `播放第 ${project.lines.indexOf(line) + 1} 行`);
-    play.addEventListener('click', () => { sequence = false; void playLine(line); });
+    play.addEventListener('click', () => { seen(); sequence = false; void playLine(line); });
     const redo = document.createElement('input'); redo.type = 'checkbox'; redo.checked = isRedo(line); redo.setAttribute('aria-label', '标记重录');
     redo.addEventListener('change', () => { setRedo(line, redo.checked); summarize(); });
     const cell = content => { const td = document.createElement('td'); td.append(content); return td; };
     const length = `${duration.toFixed(1)} 秒${looksShort(line, duration) ? ' · 偏短' : ''}`;
-    const roll = document.createElement('button'); roll.textContent = '重 roll';
-    roll.addEventListener('click', () => void rollLine(line));
+    const roll = document.createElement('button');
+    const position = queue.indexOf(line);
+    roll.textContent = running === line ? '生成中…' : position >= 0 ? `排队 ${position + 1}` : '重 roll';
+    roll.disabled = running === line || position >= 0;
+    roll.addEventListener('click', () => rollLine(line));
+    const number = document.createElement('span'); number.textContent = String(project.lines.indexOf(line) + 1);
+    const notice = notices.get(line);
+    if (notice) {
+      const dot = document.createElement('i'); dot.className = 'voice-ready-dot';
+      dot.title = notice === 'ok' ? '新版本已生成，试听后消失' : '生成失败，鼠标停在这里看原因';
+      if (notice !== 'ok') dot.title = `生成失败：${notice}`;
+      dot.style.cssText = `display:inline-block;width:8px;height:8px;margin-left:5px;border-radius:50%;vertical-align:middle;background:${notice === 'ok' ? '#ff4d5e' : '#ffae42'}`;
+      number.append(dot);
+    }
+    const seen = () => { if (notices.delete(line)) number.querySelector('.voice-ready-dot')?.remove(); };
     const count = listTakes(project, line).length;
     const versions = document.createElement('button'); versions.textContent = `版本 ${count + 1}`; versions.disabled = !count; versions.dataset.versions = '1';
     const tools = document.createElement('div'); tools.className = 'row'; tools.append(roll, versions);
-    tr.append(cell(play), cell(redo), cell(String(project.lines.indexOf(line) + 1)), cell(speakerName(line)), cell(line.text), cell(line.speech?.textOverride || '（按原文）'), cell(length), cell(tools));
+    tr.append(cell(play), cell(redo), cell(number), cell(speakerName(line)), cell(line.text), cell(line.speech?.textOverride || '（按原文）'), cell(length), cell(tools));
     const panel = document.createElement('tr'); panel.hidden = true;
-    versions.addEventListener('click', () => { panel.hidden = !panel.hidden; if (!panel.hidden) renderTakes(line, panel); });
+    versions.addEventListener('click', () => { seen(); panel.hidden = !panel.hidden; if (!panel.hidden) renderTakes(line, panel); });
     return { line, tr, panel };
   }
   function renderTakes(line, panel) {
@@ -77,12 +92,24 @@ export function createVoiceReview({ root, getProject, audioBlob, isBusy, regener
     try { await activateTake(line, take); refresh(); state('已切换当前版本', 'ok'); }
     catch (error) { state(`切换失败：${error?.message || error}`, 'error'); }
   }
-  async function rollLine(line) {
-    if (isBusy()) { state('已有声音任务在运行', 'error'); return; }
-    stop();
-    state('重新生成中…', 'busy');
-    try { await regenerate(line); refresh(); state('已生成新版本，旧版本已存档', 'ok'); }
-    catch (error) { state(`生成失败：${error?.message || error}`, 'error'); }
+  function rollLine(line) {
+    if (running === line || queue.includes(line)) return;
+    queue.push(line); notices.delete(line);
+    refresh(); state(running ? `已加入排队，前面还有 ${queue.length} 句` : '开始生成…', 'busy');
+    void pump();
+  }
+  async function pump() {
+    if (running || !queue.length) return;
+    // Another voice job (batch, preview) owns Voicebox right now: try again shortly.
+    if (isBusy()) { setTimeout(() => void pump(), 1500); return; }
+    running = queue.shift(); refresh();
+    const line = running;
+    try { await regenerate(line); notices.set(line, 'ok'); }
+    catch (error) { notices.set(line, error?.message || String(error)); }
+    running = null; refresh();
+    const failed = [...notices.values()].filter(value => value !== 'ok').length;
+    state(queue.length ? `第 ${getProject().lines.indexOf(line) + 1} 行完成，队列还剩 ${queue.length} 句` : failed ? `队列完成，${failed} 句失败（橙点）` : '队列完成，红点是新版本', failed && !queue.length ? 'error' : queue.length ? 'busy' : 'ok');
+    void pump();
   }
   function summarize() {
     const redo = getProject()?.lines.filter(isRedo).length || 0;
@@ -96,7 +123,7 @@ export function createVoiceReview({ root, getProject, audioBlob, isBusy, regener
     $('#vrRows').replaceChildren(...rows.flatMap(row => [row.tr, row.panel]));
     $('#vrTable').hidden = !rows.length;
     summarize();
-    state(`${rows.length} 句`, 'ok');
+    if (!running && !queue.length) state(`${rows.length} 句`, 'ok');
   }
   function highlight(line) { for (const row of rows) row.tr.style.background = row.line === line ? 'rgba(180,160,230,.18)' : ''; }
   function stop() {
@@ -126,7 +153,7 @@ export function createVoiceReview({ root, getProject, audioBlob, isBusy, regener
   async function regenerateMarked() {
     const project = getProject(), marked = project?.lines.filter(isRedo) || [];
     if (!marked.length) return;
-    if (isBusy()) { state('已有声音任务在运行', 'error'); return; }
+    if (isBusy() || running) { state('已有声音任务在运行', 'error'); return; }
     stop(); stopRegen = false;
     $('#vrRegen').disabled = true; $('#vrStopRegen').disabled = false;
     let done = 0, failed = 0, lastError = '';

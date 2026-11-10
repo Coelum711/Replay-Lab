@@ -1,5 +1,6 @@
 import { estimateDuration } from './project.js';
-import type { CameraEffect, CameraTransform, CgPresentation, CustomObjectRuntimeState, DirectorBeat, DirectorBeatChange, MediaAsset, PerformanceDocument, PerformanceState, ReplayCharacter, ReplayLine, ReplayProject, SceneGraphSettings, SceneMaskSpec, StagePosition, StageTransform, TransitionEffect } from './types.js';
+import { parseTextTags } from './text-tags.js';
+import type { CameraEffect, CameraTransform, CgPresentation, CustomObjectRuntimeState, DirectorBeat, DirectorBeatChange, MediaAsset, PerformanceDocument, PerformanceState, ReplayCharacter, ReplayDirectorCommand, ScreenShake, ScreenEmote, EmoteKind, ScreenFilterKind, ReplayLine, ReplayProject, SceneGraphSettings, SceneMaskSpec, StagePosition, StageTransform, TransitionEffect } from './types.js';
 import { resolveCachedSpeech } from '../speech/policy.js';
 import { resolvePunctuationPauseTiming, resolveSpeechPauseScale, speechPauseExtraSeconds } from '../speech/pause.js';
 import { normalizePuppetRig } from '../puppet/rig.js';
@@ -367,6 +368,15 @@ function buildPerformanceDirectorBeats(project: ReplayProject, autoFrames: AutoS
   return beats.sort((a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex);
 }
 
+function emoteFromCommand(command: ReplayDirectorCommand): ScreenEmote {
+  return { characterId: command.characterId ?? '', kind: (command.value ?? 'surprise') as EmoteKind, offset: 0, duration: Math.max(0.01, Number(command.duration) || 1.6) };
+}
+
+function shakeFromCommand(command: ReplayDirectorCommand): ScreenShake {
+  const [pattern, amplitude, frequency] = String(command.value ?? '').split(' ');
+  return { offset: 0, duration: Math.max(0.01, Number(command.duration) || 1), amplitude: Number(amplitude) || 12, frequency: Number(frequency) || 14, pattern: pattern === 'fixed' ? 'fixed' : 'random' };
+}
+
 export function compilePerformance(project: ReplayProject): PerformanceDocument {
   const chars = characterMap(project);
   const assets = new Map<string, MediaAsset>(project.assets.map(asset => [asset.id, asset]));
@@ -399,6 +409,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
   }
   const lines: PerformanceDocument['lines'] = [];
   let cursor = 0;
+  let currentFilter: ScreenFilterKind | null = null;
   let explicitPositions: Record<string, StagePosition> = {};
   // Once a row uses enter/exit, state.roster owns the stage (it may legitimately be empty).
   let explicitStage = false;
@@ -541,6 +552,8 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       };
     }
 
+    if (line.type === 'command' && line.command?.kind === 'filter') currentFilter = line.command.value && line.command.value !== 'none' ? line.command.value as ScreenFilterKind : null;
+    const tagged = line.type === 'command' ? { plain: line.text, ranges: [] } : parseTextTags(line.text);
     const voiceDuration = line.audioAssetId ? Number(assets.get(line.audioAssetId)?.metadata?.duration) : NaN;
     const speaker = chars.get(line.speakerId);
     const speech = line.type === 'command'
@@ -549,14 +562,15 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     const pauseExtra = line.type === 'command' ? 0 : speechPauseExtraSeconds(speech.text, resolveSpeechPauseScale(project, line), resolvePunctuationPauseTiming(project, line));
     const commandDuration = line.command?.kind === 'wait' ? Math.max(0, Number(line.command.duration) || 0)
       : line.command?.kind === 'flash' ? Math.max(0.01, Number(line.command.duration) || 0.5)
+      : line.command?.kind === 'card' ? Math.max(0.01, Number(line.command.duration) || 2.6)
       : line.command?.kind === 'motion' ? Math.max(0.01, Number(line.command.duration) || 0.5)
       : line.command?.kind === 'camera' ? Math.max(0.2, line.duration ?? 0.5)
-      : line.command?.kind === 'transition' ? Math.max(0.2, line.duration ?? 0.42)
+      : line.command?.kind === 'transition' ? Math.max(0.2, line.duration ?? (Number(line.command.duration) || (line.command.value === 'fade' || line.command.value === 'cut' ? 0.42 : 0.7)))
       : 0.04;
     const voiceHold = Math.max(0, Number(line.audioMix?.preRoll) || 0) + Math.max(0, Number(line.audioMix?.postRoll) || 0) + Math.max(0, Number(line.audioMix?.voiceOffset) || 0);
     const duration = line.type === 'command'
-      ? (parallelCommand && line.command?.kind !== 'wait' && line.command?.kind !== 'flash' ? 0 : Math.max(0, line.duration ?? commandDuration))
-      : Math.max(0.2, line.duration ?? (Number.isFinite(voiceDuration) && voiceDuration > 0 ? voiceDuration + voiceHold : estimateDuration(line.text) + pauseExtra));
+      ? (parallelCommand && line.command?.kind !== 'wait' && line.command?.kind !== 'flash' && line.command?.kind !== 'card' ? 0 : Math.max(0, line.duration ?? commandDuration))
+      : Math.max(0.2, line.duration ?? (Number.isFinite(voiceDuration) && voiceDuration > 0 ? voiceDuration + voiceHold : estimateDuration(tagged.plain) + pauseExtra));
     const start = cursor;
     const end = start + duration;
     const performanceSpeakerId = commandMotion?.characterId ?? line.speakerId;
@@ -586,6 +600,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       characterVisuals: Object.fromEntries(Object.entries(state.characterVisuals).map(([id, visual]) => [id, { ...visual, ...(visual.transform ? { transform: { ...visual.transform } } : {}) }])),
       bubble: line.bubble ? { ...line.bubble, metadata: line.bubble.metadata ? { ...line.bubble.metadata } : undefined } : state.bubble ? { ...state.bubble } : null
     };
+    const blip = line.type !== 'command' && !line.audioAssetId && ['dialogue', 'narration', 'system'].includes(line.type) ? chars.get(line.speakerId)?.textBlip ?? null : null;
     const performanceTransition = parallelTransitionByTarget.get(line.id) ?? (line.type === 'command' && line.command?.kind === 'transition' ? (line.command.value as any) : line.scene?.transition ?? 'cut');
     lines.push({
       index: index + 1,
@@ -596,9 +611,14 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       speakerId: performanceSpeakerId,
       speakerName: performanceSpeaker?.name ?? 'Unknown',
       type: line.type,
-      text: line.text,
-      textEffect: line.textEffect ?? 'all',
-      textEffectDuration: Math.max(0, line.textEffectDuration ?? Math.min(duration * 0.72, Math.max(0.35, Array.from(line.text).length * 0.055))),
+      text: tagged.plain,
+      textEffect: blip && (line.textEffect ?? 'all') === 'all' ? 'w2w' : line.textEffect ?? 'all',
+      textEffectDuration: Math.max(0, line.textEffectDuration ?? Math.min(duration * 0.72, Math.max(0.35, Array.from(tagged.plain).length * 0.055))),
+      ...(tagged.ranges.length ? { textTags: tagged.ranges } : {}),
+      ...(blip ? { textBlip: { ...blip } } : {}),
+      screenFilter: currentFilter,
+      ...(line.type === 'command' && line.command?.kind === 'emote' && line.command.characterId ? { emoteEvent: emoteFromCommand(line.command) } : {}),
+      ...(line.type === 'command' && line.command?.kind === 'card' ? { card: { title: line.command.value ?? '', subtitle: line.command.target ?? '', duration } } : {}),
       speechText: speech.text,
       speechLanguage: speech.language,
       translationPending: speech.translationPending,
@@ -628,6 +648,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       directorBeatId: beatByLineId.get(line.id)?.id ?? null,
       audioAssetId: line.audioAssetId,
       sfxAssetId: line.type === 'command' && line.command?.kind === 'sfx' ? line.command.assetId : line.sfxAssetId,
+      ...(line.type === 'command' && line.command?.kind === 'shake' ? { shakeEvent: shakeFromCommand(line.command) } : {}),
       ...(line.type === 'command' && line.command?.kind === 'flash' ? { flash: { color: line.command.value ?? '#000000', duration: Math.max(0.01, Number(line.command.duration) || 0.5) } } : {}),
       audioMix: { ...(line.audioMix ?? {}) },
       ...(line.type !== 'command' && line.duration != null ? { voiceClip: true } : {}),
@@ -635,6 +656,28 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     });
     cursor = end + (index === project.lines.length - 1 ? 0 : line.type === 'command' ? 0 : 0.18);
   });
+
+  // An emote stays up across the following lines like a shake does.
+  for (const source of lines) {
+    const emote = source.emoteEvent;
+    if (!emote) continue;
+    const from = source.start, until = source.start + emote.duration;
+    for (const target of lines) {
+      if (target.end <= from || target.start >= until) continue;
+      (target.emotes ??= []).push({ ...emote, offset: from - target.start });
+    }
+  }
+
+  // A shake keeps running across the following lines, so each line carries the part it overlaps.
+  for (const source of lines) {
+    const shake = source.shakeEvent;
+    if (!shake) continue;
+    const from = source.start, until = source.start + shake.duration;
+    for (const target of lines) {
+      if (target.end <= from || target.start >= until) continue;
+      (target.shakes ??= []).push({ ...shake, offset: from - target.start });
+    }
+  }
 
   return {
     format: 'ReplayLabPerformance',

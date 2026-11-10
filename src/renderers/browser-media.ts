@@ -12,6 +12,40 @@ export interface AudioScheduleEvent {
   lineId?: string;
   fadeIn?: number;
   fadeOut?: number;
+  /** Generated in code (typing blips) rather than loaded from an asset. */
+  synthetic?: boolean;
+}
+
+/** `blip:<hz>:<wave>:<variant>` — a 55 ms chirp; variants detune by a few semitones. */
+export function synthesizeBlip(assetId: string, context: BaseAudioContext): AudioBuffer | null {
+  const [, hzRaw, wave = 'square', variantRaw = '0'] = assetId.split(':');
+  const base = Number(hzRaw); if (!(base > 40 && base < 4000)) return null;
+  const hz = base * Math.pow(2, ([0, 2, -2, 4][Number(variantRaw) % 4] ?? 0) / 12);
+  const rate = context.sampleRate, length = Math.round(rate * 0.055);
+  const buffer = context.createBuffer(1, length, rate), data = buffer.getChannelData(0);
+  for (let i = 0; i < length; i++) {
+    const t = i / rate, phase = (t * hz) % 1;
+    const sample = wave === 'sine' ? Math.sin(2 * Math.PI * phase) : wave === 'triangle' ? 1 - 4 * Math.abs(phase - 0.5) : wave === 'sawtooth' ? 2 * phase - 1 : phase < 0.5 ? 1 : -1;
+    const envelope = Math.min(1, t / 0.004) * Math.exp(-t / 0.022);
+    data[i] = sample * envelope * 0.32;
+  }
+  return buffer;
+}
+
+/** Blip times for an unvoiced line: one per spoken character as it types out, at most ~22 per second. */
+export function textBlipEvents(line: PerformanceDocument['lines'][number], sfxVolume: number): AudioScheduleEvent[] {
+  const blip = line.textBlip; if (!blip || line.audioAssetId) return [];
+  const chars = Array.from(line.text || ''); if (!chars.length) return [];
+  const reveal = line.textEffect === 'all' ? Math.max(0.35, Math.min(line.duration * 0.72, chars.length * 0.055)) : Math.max(0.05, Math.min(line.duration, line.textEffectDuration || line.duration)) / (line.textEffect === 'run' ? 1.35 : 1);
+  const out: AudioScheduleEvent[] = []; let last = -1;
+  chars.forEach((char, index) => {
+    if (!/[\p{L}\p{N}]/u.test(char)) return;
+    const at = line.start + (index / chars.length) * reveal;
+    if (at - last < 0.045) return;
+    last = at;
+    out.push({ assetId: `blip:${Math.round(blip.pitch)}:${blip.wave}:${char.codePointAt(0)! % 4}`, start: at, volume: sfxVolume * 0.55, pan: 0, loop: false, kind: 'sfx', lineId: line.lineId, synthetic: true });
+  });
+  return out;
 }
 
 interface VoiceInterval { start: number; end: number; }
@@ -62,6 +96,7 @@ export function buildAudioSchedule(performance: PerformanceDocument): AudioSched
         ...(line.voiceClip ? { end: line.end, fadeOut: 0.04 } : {})
       });
     }
+    events.push(...textBlipEvents(line, mix.sfxVolume));
     if (line.sfxAssetId) events.push({
       assetId: line.sfxAssetId,
       start: line.start,
@@ -222,6 +257,7 @@ export class BrowserReplayPlayer {
   }
 
   private async buffer(assetId: string, context: AudioContext): Promise<AudioBuffer | null> {
+    if (assetId.startsWith('blip:')) return synthesizeBlip(assetId, context);
     let promise = this.audioBuffers.get(assetId);
     if (!promise) {
       promise = (async () => {
@@ -403,6 +439,7 @@ export class BrowserReplayPlayer {
   }
 
   private async decodeAudioAsset(assetId: string, context: AudioContext): Promise<AudioBuffer | null> {
+    if (assetId.startsWith('blip:')) return synthesizeBlip(assetId, context);
     try {
       const bytes = await sourceArrayBuffer(await this.resolveAsset(assetId));
       if (!bytes) return null;

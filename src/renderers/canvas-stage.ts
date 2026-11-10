@@ -1,3 +1,4 @@
+import { drawEmote, drawTaggedText, drawTransitionCover, MASK_TRANSITIONS, MASK_TRANSITION_SECONDS, screenFilterCss, drawScreenFilterOverlay, drawChapterCard } from './stage-fx.js';
 import type {
   CharacterLayerSet,
   FaceTemplate,
@@ -368,6 +369,33 @@ export function parseDiceText(text: string): DiceMeta | null {
 
 function outcomeColor(outcome?: DiceMeta['outcome']): string {
   return ({ critical:'#77f0b6', success:'#9fd0ff', fail:'#ef8a8a', fumble:'#ff6d6d' } as const)[outcome ?? 'success'] ?? '#f4d18b';
+}
+
+function shakeNoise(seed: number): number {
+  const value = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+  return (value - Math.floor(value)) * 2 - 1;
+}
+
+/** Offset for every active shake at this moment; random shakes are seeded, so a frame always renders the same. */
+export function screenShakeOffset(shakes: PerformanceLine['shakes'], localTime: number, width: number): { dx: number; dy: number; reach: number } | null {
+  if (!shakes?.length) return null;
+  let dx = 0, dy = 0, reach = 0;
+  for (const shake of shakes) {
+    const t = localTime - shake.offset;
+    if (t < 0 || t > shake.duration) continue;
+    const fade = Math.min(1, (shake.duration - t) / Math.max(0.05, shake.duration * 0.25));
+    const amplitude = shake.amplitude * (width / 1280) * fade;
+    if (shake.pattern === 'fixed') {
+      const phase = 2 * Math.PI * shake.frequency * t;
+      dx += Math.sin(phase) * amplitude; dy += Math.sin(phase * 1.7 + 0.6) * amplitude * 0.45;
+    } else {
+      const step = t * shake.frequency, i = Math.floor(step), k = step - i, ease = k * k * (3 - 2 * k);
+      const mix = (axis: number) => shakeNoise(i * 2 + axis) * (1 - ease) + shakeNoise((i + 1) * 2 + axis) * ease;
+      dx += mix(0) * amplitude; dy += mix(1) * amplitude * 0.7;
+    }
+    reach = Math.max(reach, amplitude);
+  }
+  return reach > 0 ? { dx, dy, reach } : null;
 }
 
 export function stageRect(position: StagePosition, count: number, width: number, height: number, index = 0, positions: StagePosition[] = []): { cx: number; maxW: number; maxH: number; floor: number } {
@@ -1365,6 +1393,13 @@ export class CanvasStageRenderer {
     shown.forEach((value, index) => this.ctx.fillText(value, x, y + index * lineHeight));
   }
 
+  private drawTagged(line: PerformanceLine, displayText: string, localTime: number, x: number, y: number, maxWidth: number, maxHeight: number, baseSize: number, minSize: number, ratio: number, align: 'left' | 'center', weight: string): void {
+    const total = Array.from(line.text).length, shown = Array.from(displayText).length;
+    const revealSeconds = Math.max(0.05, Math.min(line.duration, line.textEffectDuration || line.duration));
+    drawTaggedText(this.ctx, { fullText: line.text, shownCount: shown, ranges: line.textTags ?? [], x, y, maxWidth, maxHeight, baseSize, minSize, ratio, align, weight, time: localTime,
+      revealTimes: i => line.textEffect === 'all' ? 0 : (i / Math.max(1, total)) * revealSeconds / (line.textEffect === 'run' ? 1.35 : 1) });
+  }
+
   private drawSceneBanner(line: PerformanceLine, localTime: number): void {
     if (!line.sceneTitle) return;
     const alpha = Math.min(clamp(localTime / 0.25, 0, 1), clamp((2.9 - localTime) / 0.5, 0, 1));
@@ -1400,7 +1435,8 @@ export class CanvasStageRenderer {
       this.ctx.fillStyle = 'rgba(10,12,17,.84)'; roundRect(this.ctx, x, y, w, h, 18); this.ctx.fill();
       this.ctx.strokeStyle = 'rgba(255,255,255,.13)'; this.ctx.stroke();
       this.ctx.fillStyle = '#e5eaf4'; this.ctx.font = `${Math.max(20, width * 0.019)}px system-ui`; this.ctx.textBaseline = 'top';
-      this.drawFittedText(displayText, line.text, width / 2, y + h * 0.22, w * 0.82, h * 0.72, Math.round(Math.max(20, width * 0.019)), Math.round(width * 0.0125), 1.39, 'center');
+      if (line.textTags?.length) this.drawTagged(line, displayText, localTime, width / 2, y + h * 0.22, w * 0.82, h * 0.72, Math.round(Math.max(20, width * 0.019)), Math.round(width * 0.0125), 1.39, 'center', '');
+      else this.drawFittedText(displayText, line.text, width / 2, y + h * 0.22, w * 0.82, h * 0.72, Math.round(Math.max(20, width * 0.019)), Math.round(width * 0.0125), 1.39, 'center');
       return;
     }
     const margin = width * 0.055;
@@ -1421,7 +1457,9 @@ export class CanvasStageRenderer {
       if (meta.result && meta.target) { this.ctx.fillStyle = outcomeColor(meta.outcome); this.ctx.font = '800 34px ui-monospace,monospace'; this.ctx.textAlign = 'right'; this.ctx.fillText(`${meta.result} / ${meta.target}`, x + boxWidth - 34, y + 42); }
       this.ctx.fillStyle = '#f4f6fb'; this.ctx.font = '500 18px system-ui'; this.ctx.textAlign = 'left'; this.ctx.textBaseline = 'bottom'; wrapText(this.ctx, displayText, x + 34, y + boxHeight - 52, boxWidth - 68, 26, 2, 'left');
     } else {
-      this.ctx.fillStyle = '#f4f6fb'; this.ctx.textBaseline = 'top'; this.drawFittedText(displayText, line.text, x + 28, y + 40, boxWidth - 56, boxHeight - 58, Math.round(width * 23 / 1280), Math.round(width * 15 / 1280), 1.43, 'left', '500');
+      this.ctx.fillStyle = '#f4f6fb'; this.ctx.textBaseline = 'top';
+      if (line.textTags?.length) this.drawTagged(line, displayText, localTime, x + 28, y + 40, boxWidth - 56, boxHeight - 58, Math.round(width * 23 / 1280), Math.round(width * 15 / 1280), 1.43, 'left', '500');
+      else this.drawFittedText(displayText, line.text, x + 28, y + 40, boxWidth - 56, boxHeight - 58, Math.round(width * 23 / 1280), Math.round(width * 15 / 1280), 1.43, 'left', '500');
     }
     this.ctx.fillStyle = 'rgba(255,255,255,.12)'; roundRect(this.ctx, x + 20, y + boxHeight - 14, boxWidth - 40, 4, 2); this.ctx.fill();
     this.ctx.fillStyle = accent; roundRect(this.ctx, x + 20, y + boxHeight - 14, (boxWidth - 40) * clamp(progress, 0, 1), 4, 2); this.ctx.fill();
@@ -1472,6 +1510,7 @@ export class CanvasStageRenderer {
         const depthA = depth(a), depthB = depth(b);
         return depthB - depthA || a.actorIndex - b.actorIndex;
       });
+      const heads = new Map<string, { x: number; y: number; h: number }>();
       if (!(line.state.cg && line.state.cgPresentation?.hideCharacters)) for (const { actor, actorIndex } of stageEntries) {
         const sourceCharacter = this.character(actor.characterId);
         if (!sourceCharacter) continue;
@@ -1510,7 +1549,10 @@ export class CanvasStageRenderer {
           else if (focusMode === 'strong') { alpha = isCurrent ? 1 : 0.48; focusScale = isCurrent ? 1.045 : 0.96; }
           if (line.camera === 'focus-speaker') { if (!isCurrent) alpha *= 0.52; else focusScale *= 1.08; }
           alpha *= stageMotion.alpha;
-          this.ctx.save(); this.ctx.globalAlpha = alpha; this.ctx.translate(stageMotion.dx, stageMotion.dy);
+          // Classic "talking hop": the speaker bobs up once as their line starts.
+          const hop = isCurrent && line.type === 'dialogue' && this.performance.settings.speakerHop !== false && localTime < 0.26
+            ? -Math.sin(Math.PI * localTime / 0.26) * height * 0.016 : 0;
+          this.ctx.save(); this.ctx.globalAlpha = alpha; this.ctx.translate(stageMotion.dx, stageMotion.dy + hop);
           const expressionName = line.state.expressions[actor.characterId] ?? 'default';
           const hasLayerModel = Boolean(layerSelection.base || layerSelection.overlay || layerSelection.eyes || layerSelection.eyelids || layerSelection.pupils || layerSelection.brows || layerSelection.mouth);
           const mirror = shouldMirrorActor(character, actor);
@@ -1523,7 +1565,9 @@ export class CanvasStageRenderer {
             const { dw, dh, x, y } = geometry;
             this.ctx.shadowColor = isCurrent ? 'rgba(0,0,0,.42)' : 'rgba(0,0,0,.24)'; this.ctx.shadowBlur = isCurrent ? 28 : 18;
             this.ctx.drawImage(image, x, y, dw, dh);
+            heads.set(actor.characterId, { x: x + dw / 2 + stageMotion.dx, y: y + dh * this.opaqueTop(image) + stageMotion.dy + hop, h: dh });
           } else if (!layeredDrawn) this.drawPlaceholderActor(character, rect, viseme, blinking, isCurrent);
+          if (!heads.has(actor.characterId)) heads.set(actor.characterId, { x: rect.cx + stageMotion.dx, y: rect.floor - rect.maxH * 0.86 + stageMotion.dy + hop, h: rect.maxH });
           this.ctx.restore();
           if (this.performance.settings.showNameTags) {
             this.ctx.font = '700 14px system-ui'; const nameWidth = Math.max(74, this.ctx.measureText(character.name).width + 26), nameY = rect.floor - 26;
@@ -1533,11 +1577,29 @@ export class CanvasStageRenderer {
           this.ctx.restore();
         }, line, localTime, actorFx.ambient);
       }
+      for (const emote of line.emotes ?? []) {
+        const head = heads.get(emote.characterId);
+        if (!head) continue;
+        const size = clamp(head.h * 0.11, height * 0.05, height * 0.1);
+        const side = emote.kind === 'dots' || emote.kind === 'gloom' || emote.kind === 'steam' ? 0 : 1;
+        drawEmote(this.ctx, emote.kind, head.x + side * head.h * 0.085, head.y + size * (side ? 0.2 : -0.45), size, localTime - emote.offset, emote.duration);
+      }
       await this.drawCustomObjects(line, 'world', localTime);
       this.ctx.restore();
     };
 
-    await this.withEffects(line.sceneGraph?.worldEffects, drawWorld, line, localTime);
+    const graded = screenFilterCss(line.screenFilter);
+    if (graded || line.screenFilter) {
+      // Grade the world layer only; the textbox stays readable.
+      const target = this.ctx, depth = this.scratchDepth++;
+      const scratch = this.scratchCanvas(depth, false), scratchCtx = scratch.getContext('2d');
+      if (scratchCtx) {
+        this.ctx = scratchCtx;
+        try { await this.withEffects(line.sceneGraph?.worldEffects, drawWorld, line, localTime); } finally { this.ctx = target; this.scratchDepth--; }
+        target.save(); if (graded) target.filter = graded; target.drawImage(scratch, 0, 0); target.restore();
+        drawScreenFilterOverlay(target, line.screenFilter, width, height, localTime);
+      } else { this.scratchDepth--; await this.withEffects(line.sceneGraph?.worldEffects, drawWorld, line, localTime); }
+    } else await this.withEffects(line.sceneGraph?.worldEffects, drawWorld, line, localTime);
     await this.drawCustomObjects(line, 'screen', localTime);
 
     if (!(line.state.cg && line.state.cgPresentation?.hideTextbox)) {
@@ -1554,6 +1616,52 @@ export class CanvasStageRenderer {
         this.ctx.save(); this.ctx.globalAlpha = 1 - replayEase(line.transitionCurve, clamp(localTime / 0.42, 0, 1)); this.ctx.fillStyle = '#000'; this.ctx.fillRect(0, 0, width, height); this.ctx.restore();
       }, line, localTime, transitionFx.ambient);
     }
+    if (MASK_TRANSITIONS.has(line.transition) && !this.renderingTransitionSource) {
+      const seconds = line.type === 'command' ? Math.max(0.2, line.duration) : MASK_TRANSITION_SECONDS;
+      if (localTime < seconds) {
+        const previous = await this.previousFrame(index);
+        if (previous) drawTransitionCover(this.ctx, line.transition, localTime / seconds, width, height, previous);
+      }
+    }
+  }
+
+  private transitionSource: { performance: PerformanceDocument; index: number; canvas: HTMLCanvasElement } | null = null;
+  private renderingTransitionSource = false;
+  /** Last frame of the nearest earlier line that is actually seen (instant command lines are skipped). */
+  private async previousFrame(index: number): Promise<HTMLCanvasElement | null> {
+    let source = index - 1;
+    while (source >= 0 && this.performance.lines[source]!.type === 'command' && this.performance.lines[source]!.duration < 0.1) source--;
+    if (source < 0) return null;
+    const { width, height } = this.canvas;
+    const cached = this.transitionSource;
+    if (cached && cached.performance === this.performance && cached.index === source && cached.canvas.width === width && cached.canvas.height === height) return cached.canvas;
+    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext('2d'); if (!ctx) return null;
+    const target = this.ctx; this.ctx = ctx; this.renderingTransitionSource = true;
+    try { await this.renderLineContent(source, this.performance.lines[source]!.duration); }
+    finally { this.ctx = target; this.renderingTransitionSource = false; }
+    this.transitionSource = { performance: this.performance, index: source, canvas };
+    return canvas;
+  }
+
+  private opaqueTops = new WeakMap<object, number>();
+  /** Fraction of the image height above the first visible pixel, so marks sit on the head, not on empty margin. */
+  private opaqueTop(image: HTMLImageElement): number {
+    const known = this.opaqueTops.get(image);
+    if (known !== undefined) return known;
+    let top = 0.04;
+    try {
+      const w = 64, h = Math.max(16, Math.round(64 * image.naturalHeight / Math.max(1, image.naturalWidth)));
+      const probe = document.createElement('canvas'); probe.width = w; probe.height = h;
+      const pctx = probe.getContext('2d', { willReadFrequently: true });
+      if (pctx) {
+        pctx.drawImage(image, 0, 0, w, h);
+        const data = pctx.getImageData(0, 0, w, h).data;
+        outer: for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (data[(y * w + x) * 4 + 3]! > 40) { top = y / h; break outer; }
+      }
+    } catch { /* tainted or unsupported: keep the default */ }
+    this.opaqueTops.set(image, top);
+    return top;
   }
 
   /** Frames run one at a time and a superseded request is skipped, so a slow old frame can't cover a newer one. */
@@ -1573,7 +1681,16 @@ export class CanvasStageRenderer {
     if (!line) {
       this.ctx.fillStyle = this.performance.settings.bgColor || '#171924'; this.ctx.fillRect(0, 0, width, height); return;
     }
-    await this.withEffects(line.sceneGraph?.outputEffects, () => this.renderLineContent(index, localTime), line, localTime);
+    const shake = screenShakeOffset(line.shakes, localTime, width);
+    if (shake) {
+      // Zoom in slightly so the shaken frame never reveals the empty edge of the canvas.
+      const zoom = 1 + (2 * shake.reach) / Math.min(width, height);
+      this.ctx.save();
+      this.ctx.translate(width / 2 + shake.dx, height / 2 + shake.dy); this.ctx.scale(zoom, zoom); this.ctx.translate(-width / 2, -height / 2);
+    }
+    try { await this.withEffects(line.sceneGraph?.outputEffects, () => this.renderLineContent(index, localTime), line, localTime); }
+    finally { if (shake) this.ctx.restore(); }
+    if (line.card) drawChapterCard(this.ctx, line.card, localTime, width, height);
     if (line.flash) this.drawFlash(line.flash, localTime);
   }
 
