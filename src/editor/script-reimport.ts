@@ -25,7 +25,7 @@ function unique(ids: string[] | undefined): string[] | undefined {
   return ids ? [...new Set(ids)] : ids;
 }
 
-function remapLineCharacters(line: ReplayLine, idMap: Map<string, string>): ReplayLine {
+export function remapLineCharacters(line: ReplayLine, idMap: Map<string, string>): ReplayLine {
   const clone = structuredClone(line);
   const remap = (id: string): string => idMap.get(id) ?? id;
   clone.speakerId = remap(clone.speakerId);

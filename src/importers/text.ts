@@ -11,7 +11,10 @@ export function parsePlainTextLog(input: string): ParsedRecord[] {
   for (const original of raw) {
     let line = original.replace(/\u00a0/g, ' ').trim();
     if (!line) continue;
-    line = line.replace(/^\[[^\]]+\]\s*/, '');
+    // Drop a leading [timestamp] / [channel] tag, but keep "[Name] message" for the bracket-speaker form below.
+    const bracket = line.match(/^\[([^\]]+)\]\s*(.*)$/);
+    if (bracket && (/^[\d\s:：\-\/.年月日时分秒]+$/.test(bracket[1]!) || /^[^:：]{1,50}[:：]/.test(bracket[2]!))) line = bracket[2]!;
+    if (!line) continue;
 
     let match = line.match(/^(.{1,50})\s+\d{1,2}:\d{2}(?::\d{2})?$/);
     if (match) {
@@ -25,7 +28,7 @@ export function parsePlainTextLog(input: string): ParsedRecord[] {
       continue;
     }
 
-    match = line.match(/^([^:：]{1,50})\s*[:：]\s*(.+)$/);
+    match = line.match(/^([^:：]{1,50})\s*[:：](?!\/\/)\s*(.+)$/);
     if (match) {
       out.push({ speaker: match[1]!.trim(), text: match[2]!.trim() });
       pendingName = '';
@@ -55,6 +58,7 @@ export const TextImporter: ReplayImporter = {
   label: 'Plain / QQ-style text log',
   extensions: ['.txt', '.log'],
   sniff(input) {
+    if (/<!doctype\s+html|<html[\s>]|<body[\s>]|<\/span>/i.test(input)) return 0.05;
     if (/^[^\n:：]{1,50}[:：].+$/m.test(input)) return 0.8;
     if (/^.{1,50}\s+\d{1,2}:\d{2}(?::\d{2})?$/m.test(input)) return 0.7;
     return input.trim() ? 0.3 : 0;

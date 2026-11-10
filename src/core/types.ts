@@ -1,5 +1,5 @@
 export type LineType = 'dialogue' | 'dice' | 'hitpoint' | 'wheel' | 'bubble' | 'system' | 'narration' | 'command';
-export type DirectorCommandKind = 'dismiss' | 'enter' | 'move' | 'motion' | 'expression' | 'background' | 'cg' | 'object' | 'bgm' | 'ambient' | 'sfx' | 'camera' | 'transition' | 'scene' | 'chapter' | 'wait';
+export type DirectorCommandKind = 'dismiss' | 'enter' | 'move' | 'motion' | 'expression' | 'background' | 'cg' | 'object' | 'bgm' | 'ambient' | 'sfx' | 'camera' | 'transition' | 'scene' | 'chapter' | 'wait' | 'flash' | 'shake' | 'emote' | 'filter' | 'card';
 export type DirectorBeatTimingMode = 'parallel' | 'sequence';
 export type LineExpressionMode = 'inherit' | 'set';
 export type CharacterKind = 'normal' | 'npc' | 'kp' | 'system';
@@ -11,7 +11,7 @@ export type AutoStageMode = 'vn-continuity' | 'recent';
 export type SpeakerFocusMode = 'none' | 'subtle' | 'strong';
 export type CameraEffect = 'none' | 'push' | 'shake' | 'focus-speaker';
 export type CameraPlacementSource = 'auto' | 'manual' | 'inherited';
-export type TransitionEffect = 'cut' | 'fade';
+export type TransitionEffect = 'cut' | 'fade' | 'dissolve' | 'wipe-left' | 'wipe-right' | 'wipe-up' | 'wipe-down' | 'iris-in' | 'iris-out' | 'blinds' | 'noise';
 export type BackgroundMethod = 'replace' | 'delay' | 'cross' | 'black' | 'white' | 'push' | 'cover';
 export type AnimationCurve = 'linear' | 'quadratic' | 'quadraticR' | 'sigmoid' | 'right' | 'left' | 'sincurve';
 /** RplGen-compatible text reveal modes: all / word-by-word / line-by-line / run. */
@@ -278,9 +278,22 @@ export interface VoicePreset {
   voiceId?: string;
   rate?: number;
   pitch?: number;
+  /** Stable clone is the stock Voicebox path; experimental-clone-instruct uses an x-vector bridge. */
+  /** auto: use the emotion bridge only for lines that carry emotion, tone or line-state directions. */
+  mode?: 'stable-clone' | 'experimental-clone-instruct' | 'auto';
+  /** Acting direction, kept separate from the dialogue text. */
+  instruct?: string;
+  actingPreset?: string;
+  actingStrength?: 'subtle' | 'natural' | 'strong';
+  seed?: number;
+  modelSize?: '0.6B' | '1.7B';
 }
 
 export interface CharacterSpeechProfile {
+  /** Named extra voices for this character, e.g. an angry take of the same speaker. */
+  voiceVariants?: Array<{ label: string; voiceId: string }>;
+  /** Personality and speech habits sent with every expressive generation of this character. */
+  persona?: string;
   /** Undefined/null means: inherit the project's Log language. */
   defaultLanguage?: string | null;
   /** Multiplier for punctuation/manual speech pauses. Undefined means inherit project settings. */
@@ -294,6 +307,8 @@ export interface CharacterSpeechProfile {
 }
 
 export interface TranslationCache {
+  /** Detection belongs to the cache, never an authored line-language override. */
+  detectedSourceLanguage?: string;
   sourceText: string;
   sourceLanguage: string;
   targetLanguage: string;
@@ -320,14 +335,36 @@ export interface PunctuationPauseTiming {
   colon?: number;
 }
 
+export interface ProsodyPoint { position: number; semitones: number; }
+
+export interface SpeechSegment {
+  /** Spoken text of this part; all parts together are the line's spoken text. */
+  text: string;
+  /** Tone direction for this part only (replaces the line's own tone). */
+  instruct?: string;
+  /** 1 = as generated; 0.7 slower … 1.4 faster, pitch kept. */
+  speed?: number;
+  /** Silence after this part, seconds. */
+  pauseAfter?: number;
+}
+
 export interface LineSpeechConfig {
+  /** This line's own side of the character, added to the character persona or replacing it. */
+  persona?: string;
+  personaReplacesCharacter?: boolean;
+  /** Segmented performance: each part is voiced separately with its own tone, speed and pause, then joined. */
+  segments?: SpeechSegment[];
+  /** Editing draft only. Applied by explicit fine-tune or reenact actions. */
+  prosodyCurve?: ProsodyPoint[];
+  /** Acting-only override; leaves the inherited character voice/profile live. */
+  acting?: Pick<VoicePreset, 'actingPreset' | 'actingStrength' | 'instruct' | 'seed'>;
   /** Per-line target language. Undefined/null means inherit character/project policy. */
   languageOverride?: string | null;
   /** Per-line pause multiplier. Undefined means inherit character/project settings. */
   pauseScale?: number;
   /** Optional exact punctuation gaps authored for this line, commonly via batch editing. */
   punctuationPauses?: PunctuationPauseTiming | null;
-  /** Optional source-language override or language-detection result. */
+  /** Optional user-authored source-language override. */
   sourceLanguage?: string | null;
   /** Per-line accent override. Undefined means inherit the character language slot. */
   accentOverride?: AccentSelection | null;
@@ -614,6 +651,9 @@ export interface CameraTransform {
   y: number;
   /** 1 = full frame. Values above 1 crop in. */
   zoom: number;
+  /** 2.5D orbit angles in degrees. Omitted/zero preserves the legacy view. */
+  yaw?: number;
+  pitch?: number;
 }
 
 export interface StageTransform {
@@ -649,6 +689,8 @@ export interface ReplayCharacter {
   puppet: CharacterPuppetRig;
   /** Shared face-template placement and perspective fit. */
   faceFit: CharacterFaceFit;
+  /** Typing blip for this character's unvoiced lines; absent means silent typing. */
+  textBlip?: TextBlipVoice | null;
   /** Legacy/default voice fallback. */
   voice?: VoicePreset;
   /** Spoken-audio language/voice policy. Visible dialogue text is unaffected. */
@@ -792,6 +834,31 @@ export interface DirectorBeat {
   summary: string;
 }
 
+/** Manga mark popped above a character's head (💢 anger vein, 💦 sweat, ！ etc.). */
+export type EmoteKind = 'anger' | 'sweat' | 'surprise' | 'question' | 'surprise-question' | 'dots' | 'heart' | 'note' | 'sparkle' | 'gloom' | 'steam' | 'idea';
+export interface ScreenEmote {
+  characterId: string;
+  kind: EmoteKind;
+  /** Seconds from the start of the line carrying it (negative when it began on an earlier line). */
+  offset: number;
+  duration: number;
+}
+/** Colour grade over the world layer (background, CG and characters), kept until the next /filter. */
+export type ScreenFilterKind = 'memory' | 'night' | 'dusk' | 'mono' | 'dream' | 'vignette' | 'danger';
+/** Full-screen eyecatch card shown while a /card command line runs. */
+export interface ChapterCard { title: string; subtitle: string; duration: number; }
+/** Per-character typing blip used for unvoiced lines. */
+export interface TextBlipVoice { pitch: number; wave: 'square' | 'triangle' | 'sine' | 'sawtooth'; }
+
+export interface ScreenShake {
+  offset: number;
+  duration: number;
+  /** Peak displacement in pixels at a 1280-wide stage. */
+  amplitude: number;
+  frequency: number;
+  pattern: 'fixed' | 'random';
+}
+
 export interface ReplayDirectorCommand {
   kind: DirectorCommandKind;
   /** Human-readable argument retained even if the referenced object is later renamed or temporarily unresolved. */
@@ -888,6 +955,8 @@ export interface ReplaySettings {
   /** Visual emphasis applied to the active speaker by renderers. */
   speakerFocus: SpeakerFocusMode;
   dimOthers: boolean;
+  /** Active speaker hops slightly when a line starts. Undefined counts as on. */
+  speakerHop?: boolean;
   showNameTags: boolean;
   bgColor: string;
   /** Legacy mirrors kept for older projects/exporters. New code should use audioMix. */
@@ -900,6 +969,8 @@ export interface ReplaySettings {
   templateId: string;
   /** Language of imported Log text, e.g. zh-CN, en-GB, or 'auto'. */
   logLanguage: string;
+  /** Project-wide spoken/TTS language. Character/line overrides take precedence; 'auto' falls back to Log language. */
+  speechLanguage: string;
   translationProvider?: string;
   ttsProvider?: string;
 }
@@ -980,7 +1051,22 @@ export interface PerformanceLine {
   directorBeatId?: string | null;
   audioAssetId?: string | null;
   sfxAssetId?: string | null;
+  /** Full-screen colour flash played over everything while this command line runs. */
+  flash?: { color: string; duration: number } | null;
+  /** Screen shakes overlapping this line; offset is seconds from this line's start. */
+  shakes?: ScreenShake[];
+  shakeEvent?: ScreenShake | null;
+  emotes?: ScreenEmote[];
+  emoteEvent?: ScreenEmote | null;
+  screenFilter?: ScreenFilterKind | null;
+  card?: ChapterCard | null;
+  /** Kinetic text styling; `text` is already plain. */
+  textTags?: import('./text-tags.js').TextTagRange[];
+  /** Typing blips play for this line (unvoiced, speaker has a blip voice). */
+  textBlip?: TextBlipVoice | null;
   audioMix: AudioLineMix;
+  /** True when the author fixed this row's length, so its voice must not run past line end. */
+  voiceClip?: boolean;
   bgmFadeSeconds?: number | null;
 }
 

@@ -1,3 +1,4 @@
+import { stripTextTags } from '../core/text-tags.js';
 import type { ReplayProject } from '../core/types.js';
 
 function escapeText(text: string): string {
@@ -32,8 +33,8 @@ export function exportTyranoScript(project: ReplayProject): string {
       continue;
     }
     const name = names.get(line.speakerId) ?? 'Unknown';
-    if (line.type === 'narration' || line.type === 'system') out.push(`${escapeText(line.text)}[p]`);
-    else out.push(`[chara_name name="${name}"]`, `${escapeText(line.text)}[p]`);
+    if (line.type === 'narration' || line.type === 'system') out.push(`${escapeText(stripTextTags(line.text))}[p]`);
+    else out.push(`[chara_name name="${name}"]`, `${escapeText(stripTextTags(line.text))}[p]`);
   }
   return out.join('\n') + '\n';
 }

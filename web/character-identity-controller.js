@@ -1,10 +1,14 @@
-import { suggestCharacterDuplicates, planCharacterMerge, mergeCharacters } from '../dist/index.js';
+import { suggestCharacterDuplicates, planCharacterMerge, mergeCharacters, planCharacterRemoval, removeCharacter } from '../dist/index.js';
 
 function humanMergeConflict(path) {
   if (path === 'kind') return '角色类型';
   if (path === 'showOnStage') return '自动上镜';
   if (path === 'defaultPosition') return '默认站位';
   if (path === 'stagePositions') return '同句舞台站位';
+  if (path === 'stageTransforms') return '舞台摆放';
+  if (path === 'sceneGraph.nodeOverrides') return '角色图层 / 滤镜';
+  if (path === 'speech.ttsProvider') return '声音服务';
+  if (path === 'speech.translationProvider') return '翻译服务';
   if (path === 'puppet') return 'Puppet / 形变';
   if (path === 'faceFit') return 'Face Fit 五官位置';
   if (path === 'voice') return '旧式声音设置';
@@ -43,6 +47,24 @@ export class CharacterIdentityController {
     this.options = options;
   }
 
+  mountActions(host, characterId) {
+    const { project, escapeHtml, onRemoved, setStatus } = this.options;
+    const plan = planCharacterRemoval(project, characterId);
+    host.innerHTML = `<div class="row character-cleanup-actions"><strong>${escapeHtml(plan.name)}</strong><button type="button" data-character-open-merge ${project.characters.length < 2 ? 'disabled' : ''}>合并到…</button><button type="button" class="danger" data-character-open-delete>删除角色</button></div><div class="character-delete-review stack" data-character-delete-review hidden><strong>删除“${escapeHtml(plan.name)}”</strong><div data-character-delete-impact></div><div class="row"><button type="button" class="danger" data-character-delete-apply ${plan.canRemove ? '' : 'disabled'}>确认删除</button><button type="button" data-character-delete-merge ${project.characters.length < 2 ? 'disabled' : ''}>选择合并目标</button><button type="button" data-character-delete-cancel>取消</button></div></div>`;
+    const review = host.querySelector('[data-character-delete-review]');
+    host.querySelector('[data-character-delete-impact]').textContent = plan.canRemove
+      ? `当前剧本没有引用这个角色。删除角色配置，素材文件保留。可用顶部“撤销”恢复。`
+      : `这个角色关联 ${plan.lines} 行台本，并可能有舞台或演出引用。请合并到正确角色，台词、录音和演出会一起保留。`;
+    host.querySelector('[data-character-open-merge]').onclick = () => this.openMerge?.(characterId);
+    host.querySelector('[data-character-open-delete]').onclick = () => { review.hidden = !review.hidden; };
+    host.querySelector('[data-character-delete-cancel]').onclick = () => { review.hidden = true; };
+    host.querySelector('[data-character-delete-merge]').onclick = () => this.openMerge?.(characterId);
+    host.querySelector('[data-character-delete-apply]').onclick = () => {
+      try { const result = removeCharacter(project, characterId); onRemoved?.(result); }
+      catch (error) { setStatus?.(error.message); host.querySelector('[data-character-delete-impact]').textContent = error.message; }
+    };
+  }
+
   mount(host) {
     const {
       project,
@@ -54,15 +76,15 @@ export class CharacterIdentityController {
 
     const suggestions = suggestCharacterDuplicates(project);
     const identity = document.createElement('details');
-    identity.className = 'card' + (suggestions.length ? '' : ' advanced-only');
+    identity.className = 'card character-identity';
     identity.innerHTML = `
       <summary>${suggestions.length ? '可能有重复角色' : '角色身份 / 手动合并'}
-        <span class="summary-meta">${suggestions.length ? `${suggestions.length} 组 · 不处理也能继续` : '高级'}</span>
+        <span class="summary-meta">${suggestions.length ? `${suggestions.length} 组` : '可撤销'}</span>
       </summary>
       <div class="stack disclosure-body">
         <div class="muted">这里只做保守提示：大小写、全半角、标点差异和已经确认的导入别名可以发现；Matthew ↔ 马修这类跨语言关系不会自动猜。</div>
         ${suggestions.length ? `<div class="stack" data-character-merge-suggestions>${suggestions.slice(0, 6).map((item, index) => `<button type="button" class="small" data-character-merge-suggestion="${index}">${escapeHtml(item.keepName)} ≈ ${escapeHtml(item.mergeName)} · ${escapeHtml(item.reason)}</button>`).join('')}</div>` : ''}
-        <details class="subdetails ${suggestions.length ? '' : 'advanced-only'}" data-character-merge-manual>
+        <details class="subdetails" data-character-merge-manual>
           <summary>检查 / 手动指定两个角色</summary>
           <div class="stack disclosure-body">
             <div class="grid2">
@@ -116,6 +138,14 @@ export class CharacterIdentityController {
 
     keepSel?.addEventListener('change', refreshImpact);
     sourceSel?.addEventListener('change', refreshImpact);
+    this.openMerge = sourceId => {
+      sourceSel.value = sourceId;
+      if (keepSel.value === sourceId) keepSel.value = project.characters.find(item => item.id !== sourceId)?.id || '';
+      identity.open = true; manual.open = true;
+      refreshImpact();
+      identity.scrollIntoView?.({ block: 'nearest' });
+      keepSel.focus();
+    };
     for (const button of identity.querySelectorAll('[data-character-merge-suggestion]')) {
       button.addEventListener('click', () => {
         const item = suggestions[Number(button.dataset.characterMergeSuggestion)];

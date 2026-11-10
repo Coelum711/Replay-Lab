@@ -31,6 +31,7 @@ export function extensionForMime(mime = ''): string {
   if (m.includes('mpeg') || m.includes('mp3')) return 'mp3';
   if (m.includes('ogg')) return 'ogg';
   if (m.includes('webm')) return 'webm';
+  if (m.includes('audio/mp4') || m.includes('m4a')) return 'm4a';
   if (m.includes('flac')) return 'flac';
   if (m.includes('png')) return 'png';
   if (m.includes('jpeg') || m.includes('jpg')) return 'jpg';
@@ -52,10 +53,10 @@ export function assetDirectory(kind: AssetKind): string {
   }
 }
 
-export function generatedVoicePath(character: ReplayCharacter, line: ReplayLine, mime = 'audio/wav'): string {
+export function generatedVoicePath(character: ReplayCharacter, line: ReplayLine, mime = 'audio/wav', revision = ''): string {
   const charFolder = `${sanitizePathPart(character.name)}__${sanitizePathPart(character.id)}`;
   const ext = extensionForMime(mime);
-  return `assets/voice/generated/${charFolder}/${sanitizePathPart(line.id)}.${ext}`;
+  return `assets/voice/generated/${charFolder}/${sanitizePathPart(line.id)}${revision ? '__' + sanitizePathPart(revision) : ''}.${ext}`;
 }
 
 export function projectUri(path: string): string {

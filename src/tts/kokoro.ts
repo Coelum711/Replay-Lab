@@ -118,6 +118,12 @@ function voiceMatchesLanguage(id: string, meta: KokoroVoiceMetadata | undefined,
   return languageBase(voice) === languageBase(target);
 }
 
+function mostlyCjk(text: string): boolean {
+  const cjk = (text.match(/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/g) ?? []).length;
+  const latin = (text.match(/[A-Za-z]/g) ?? []).length;
+  return cjk > 0 && cjk * 2 >= latin;
+}
+
 export interface ReplayLabFreeTtsOptions {
   modelId?: string;
   /** Optional ESM package specifier/URL for kokoro-js. Defaults to the installed package name. */
@@ -218,6 +224,7 @@ export class ReplayLabFreeTtsProvider implements TtsProvider {
       const supported = this.capabilities.supportedLanguages.some(language => normalizeLanguage(language) === normalizeLanguage(request.language));
       if (!supported) throw new Error(`Replay Lab Free Kokoro currently supports en-US/en-GB in the browser runtime, not ${request.language}. Bind another local/external provider for this language.`);
     }
+    if (mostlyCjk(request.text)) throw new Error('Replay Lab Free 目前只有英文声音，读中文或日文会变成错误的发音。请先翻译成英文，或给这个角色绑定其他声音服务。');
     const tts = await this.instance();
     const voice = await this.chooseVoice(request);
     const speed = request.rate && request.rate > 0 ? request.rate : 1;

@@ -12,6 +12,40 @@ export interface AudioScheduleEvent {
   lineId?: string;
   fadeIn?: number;
   fadeOut?: number;
+  /** Generated in code (typing blips) rather than loaded from an asset. */
+  synthetic?: boolean;
+}
+
+/** `blip:<hz>:<wave>:<variant>` — a 55 ms chirp; variants detune by a few semitones. */
+export function synthesizeBlip(assetId: string, context: BaseAudioContext): AudioBuffer | null {
+  const [, hzRaw, wave = 'square', variantRaw = '0'] = assetId.split(':');
+  const base = Number(hzRaw); if (!(base > 40 && base < 4000)) return null;
+  const hz = base * Math.pow(2, ([0, 2, -2, 4][Number(variantRaw) % 4] ?? 0) / 12);
+  const rate = context.sampleRate, length = Math.round(rate * 0.055);
+  const buffer = context.createBuffer(1, length, rate), data = buffer.getChannelData(0);
+  for (let i = 0; i < length; i++) {
+    const t = i / rate, phase = (t * hz) % 1;
+    const sample = wave === 'sine' ? Math.sin(2 * Math.PI * phase) : wave === 'triangle' ? 1 - 4 * Math.abs(phase - 0.5) : wave === 'sawtooth' ? 2 * phase - 1 : phase < 0.5 ? 1 : -1;
+    const envelope = Math.min(1, t / 0.004) * Math.exp(-t / 0.022);
+    data[i] = sample * envelope * 0.32;
+  }
+  return buffer;
+}
+
+/** Blip times for an unvoiced line: one per spoken character as it types out, at most ~22 per second. */
+export function textBlipEvents(line: PerformanceDocument['lines'][number], sfxVolume: number): AudioScheduleEvent[] {
+  const blip = line.textBlip; if (!blip || line.audioAssetId) return [];
+  const chars = Array.from(line.text || ''); if (!chars.length) return [];
+  const reveal = line.textEffect === 'all' ? Math.max(0.35, Math.min(line.duration * 0.72, chars.length * 0.055)) : Math.max(0.05, Math.min(line.duration, line.textEffectDuration || line.duration)) / (line.textEffect === 'run' ? 1.35 : 1);
+  const out: AudioScheduleEvent[] = []; let last = -1;
+  chars.forEach((char, index) => {
+    if (!/[\p{L}\p{N}]/u.test(char)) return;
+    const at = line.start + (index / chars.length) * reveal;
+    if (at - last < 0.045) return;
+    last = at;
+    out.push({ assetId: `blip:${Math.round(blip.pitch)}:${blip.wave}:${char.codePointAt(0)! % 4}`, start: at, volume: sfxVolume * 0.55, pan: 0, loop: false, kind: 'sfx', lineId: line.lineId, synthetic: true });
+  });
+  return out;
 }
 
 interface VoiceInterval { start: number; end: number; }
@@ -32,8 +66,9 @@ function audioSettings(performance: PerformanceDocument) {
 
 function voiceIntervals(performance: PerformanceDocument): VoiceInterval[] {
   const out: VoiceInterval[] = [];
+  if(audioSettings(performance).voiceVolume<=0)return out;
   for (const line of performance.lines) {
-    if (!line.audioAssetId) continue;
+    if (!line.audioAssetId || (line.audioMix?.voiceGain ?? 1)<=0) continue;
     const offset = Number(line.audioMix?.voiceOffset) || 0;
     const pre = Math.max(0, Number(line.audioMix?.preRoll) || 0);
     const post = Math.max(0, Number(line.audioMix?.postRoll) || 0);
@@ -53,17 +88,19 @@ export function buildAudioSchedule(performance: PerformanceDocument): AudioSched
       events.push({
         assetId: line.audioAssetId,
         start,
-        volume: mix.voiceVolume * Math.max(0, Number(line.audioMix?.voiceGain) || 1),
+        volume: mix.voiceVolume * Math.max(0, Number(line.audioMix?.voiceGain ?? 1)),
         pan: Math.max(-1, Math.min(1, Number(line.audioMix?.voicePan) || 0)),
         loop: false,
         kind: 'voice',
-        lineId: line.lineId
+        lineId: line.lineId,
+        ...(line.voiceClip ? { end: line.end, fadeOut: 0.04 } : {})
       });
     }
+    events.push(...textBlipEvents(line, mix.sfxVolume));
     if (line.sfxAssetId) events.push({
       assetId: line.sfxAssetId,
       start: line.start,
-      volume: mix.sfxVolume * Math.max(0, Number(line.audioMix?.sfxGain) || 1),
+      volume: mix.sfxVolume * Math.max(0, Number(line.audioMix?.sfxGain ?? 1)),
       pan: Math.max(-1, Math.min(1, Number(line.audioMix?.sfxPan) || 0)),
       loop: false,
       kind: 'sfx',
@@ -99,42 +136,45 @@ export function buildAudioSchedule(performance: PerformanceDocument): AudioSched
   return events.sort((a, b) => a.start - b.start || (a.kind === 'voice' ? -1 : 1));
 }
 
-function applyEnvelope(gain: AudioParam, event: AudioScheduleEvent, baseTime: number, offset: number, performance: PerformanceDocument): void {
-  const baseVolume = Math.max(0, event.volume);
-  const start = Math.max(event.start, offset);
-  const end = event.end ?? performance.duration;
-  const when = baseTime + Math.max(0, start - offset);
-  const finish = baseTime + Math.max(0, end - offset);
-  const fadeIn = Math.max(0, Number(event.fadeIn) || 0);
-  const fadeOut = Math.max(0, Number(event.fadeOut) || 0);
-  gain.cancelScheduledValues(when);
-  if (fadeIn > 0 && start <= event.start + fadeIn) {
-    const progressed = Math.max(0, Math.min(1, (start - event.start) / fadeIn));
-    gain.setValueAtTime(baseVolume * progressed, when);
-    gain.linearRampToValueAtTime(baseVolume, baseTime + Math.max(0, event.start + fadeIn - offset));
-  } else gain.setValueAtTime(baseVolume, when);
-  if (fadeOut > 0 && event.end !== undefined) {
-    const fadeStart = Math.max(start, event.end - fadeOut);
-    gain.setValueAtTime(baseVolume, baseTime + Math.max(0, fadeStart - offset));
-    gain.linearRampToValueAtTime(0, finish);
+/** One combined envelope prevents ducking automation from overwriting crossfades. */
+export function audioEnvelopePoints(event: AudioScheduleEvent, offset: number, performance: PerformanceDocument): Array<{time:number;value:number}> {
+  const start=Math.max(event.start,offset),end=Math.max(start,event.end??performance.duration);
+  const fadeIn=Math.max(0,event.fadeIn??0),fadeOut=Math.max(0,event.fadeOut??0);
+  const mix=audioSettings(performance),duck=mix.ducking;
+  const attack=Math.max(.01,duck?.attackSeconds??.12),release=Math.max(.01,duck?.releaseSeconds??.35);
+  const voices=duck?.enabled&&(event.kind==='bgm'||event.kind==='ambient')
+    ?voiceIntervals(performance).filter(v=>v.end+release>start&&v.start-attack<end):[];
+  const duckGain=Math.max(0,Math.min(1,event.kind==='bgm'?(duck?.bgmGain??1):(duck?.ambientGain??1)));
+  const clamp=(n:number)=>Math.max(0,Math.min(1,n));
+  const value=(time:number)=>{
+    const fade=(fadeIn?clamp((time-event.start)/fadeIn):1)*(fadeOut&&event.end!==undefined?clamp((end-time)/fadeOut):1);
+    let factor=1;
+    for(const voice of voices){
+      const amount=time<voice.start?clamp((time-voice.start+attack)/attack):time<=voice.end?1:clamp((voice.end+release-time)/release);
+      factor=Math.min(factor,1-(1-duckGain)*amount);
+    }
+    return Math.max(0,event.volume)*fade*factor;
+  };
+  const boundaries=new Set([start,end]);
+  for(const t of [event.start+fadeIn,end-fadeOut,...voices.flatMap(v=>[v.start-attack,v.start,v.end,v.end+release])]){
+    if(t>start&&t<end)boundaries.add(t);
   }
+  const times=[...boundaries].sort((a,b)=>a-b),points=[{time:start,value:value(start)}];
+  const append=(a:number,b:number,depth=0)=>{
+    const mid=(a+b)/2;
+    if(depth<8&&Math.abs(value(mid)-(value(a)+value(b))/2)>.0005){append(a,mid,depth+1);append(mid,b,depth+1);}
+    else points.push({time:b,value:value(b)});
+  };
+  for(let i=1;i<times.length;i++)append(times[i-1]!,times[i]!);
+  return points;
+}
 
-  const mix = audioSettings(performance);
-  if (!mix.ducking?.enabled || (event.kind !== 'bgm' && event.kind !== 'ambient')) return;
-  const duckGain = event.kind === 'bgm' ? mix.ducking.bgmGain : mix.ducking.ambientGain;
-  const attack = Math.max(0.01, Number(mix.ducking.attackSeconds) || 0.12);
-  const release = Math.max(0.01, Number(mix.ducking.releaseSeconds) || 0.35);
-  for (const voice of voiceIntervals(performance)) {
-    if (voice.end <= start || voice.start >= end) continue;
-    const downAt = Math.max(start, voice.start - attack);
-    const voiceAt = Math.max(start, voice.start);
-    const upAt = Math.min(end, voice.end + release);
-    const ducked = baseVolume * Math.max(0, Math.min(1, duckGain));
-    gain.setValueAtTime(baseVolume, baseTime + Math.max(0, downAt - offset));
-    gain.linearRampToValueAtTime(ducked, baseTime + Math.max(0, voiceAt - offset));
-    gain.setValueAtTime(ducked, baseTime + Math.max(0, voice.end - offset));
-    gain.linearRampToValueAtTime(baseVolume, baseTime + Math.max(0, upAt - offset));
-  }
+function applyEnvelope(gain: AudioParam,event: AudioScheduleEvent,baseTime:number,offset:number,performance:PerformanceDocument):void {
+  const points=audioEnvelopePoints(event,offset,performance);
+  const first=points[0]!;
+  gain.cancelScheduledValues(baseTime+first.time-offset);
+  gain.setValueAtTime(first.value,baseTime+first.time-offset);
+  for(const point of points.slice(1))gain.linearRampToValueAtTime(point.value,baseTime+point.time-offset);
 }
 
 async function sourceArrayBuffer(source: BrowserAssetSource): Promise<ArrayBuffer | null> {
@@ -198,6 +238,8 @@ export class BrowserReplayPlayer {
   private audioContext: AudioContext | null = null;
   private audioBuffers = new Map<string, Promise<AudioBuffer | null>>();
   private scheduled: ScheduledSource[] = [];
+  private heldBeds = new Map<string, { source: AudioBufferSourceNode; gain: GainNode; base: number }>();
+  private lineFinished: (() => void) | null = null;
   private raf = 0;
   private generation = 0;
   private callbacks: ReplayPlayerCallbacks;
@@ -215,13 +257,14 @@ export class BrowserReplayPlayer {
   }
 
   private async buffer(assetId: string, context: AudioContext): Promise<AudioBuffer | null> {
+    if (assetId.startsWith('blip:')) return synthesizeBlip(assetId, context);
     let promise = this.audioBuffers.get(assetId);
     if (!promise) {
       promise = (async () => {
         const bytes = await sourceArrayBuffer(await this.resolveAsset(assetId));
         if (!bytes) return null;
         return await context.decodeAudioData(bytes.slice(0));
-      })().catch(() => null);
+      })().catch(() => { this.audioBuffers.delete(assetId); return null; });
       this.audioBuffers.set(assetId, promise);
     }
     return promise;
@@ -229,21 +272,78 @@ export class BrowserReplayPlayer {
 
   clearAudioCache(): void { this.audioBuffers.clear(); }
 
+  async dispose(): Promise<void> {
+    this.stop();this.clearAudioCache();
+    if(this.audioContext && this.audioContext.state!=='closed')await this.audioContext.close();
+    this.audioContext=null;
+  }
+
   stop(): void {
+    this.stopLine();
+    for (const bed of this.heldBeds.values()) { try { bed.source.stop(); } catch {} }
+    this.heldBeds.clear();
+  }
+
+  /** Stops the current line's voice/SFX and animation; beds held for VN reading keep playing. */
+  stopLine(): void {
     this.generation += 1;
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
     for (const item of this.scheduled) { try { item.source.stop(); } catch {} }
     this.scheduled = [];
     this.callbacks.onStop?.();
+    const finished = this.lineFinished;
+    this.lineFinished = null;
+    finished?.();
   }
 
-  private async scheduleAudio(events: AudioScheduleEvent[], offset: number, destination: AudioNode, audible = true): Promise<{ context: AudioContext; base: number }> {
+  /** Keeps BGM/ambient continuous across reader-paced VN lines: only a changed track is restarted. */
+  private async syncHeldBeds(line: PerformanceDocument['lines'][number], context: AudioContext, generation: number): Promise<void> {
+    const mix = audioSettings(this.performance), master = Math.max(0, Number(mix.masterVolume) || 0);
+    const ducked = Boolean(line.audioAssetId && mix.ducking?.enabled);
+    const wanted = new Map<string, { assetId: string; base: number; gain: number }>();
+    if (line.state.bgm) wanted.set(`bgm:${line.state.bgm}`, { assetId: line.state.bgm, base: mix.bgmVolume * master, gain: ducked ? mix.ducking.bgmGain : 1 });
+    if (line.state.ambient) wanted.set(`ambient:${line.state.ambient}`, { assetId: line.state.ambient, base: mix.ambientVolume * master, gain: ducked ? mix.ducking.ambientGain : 1 });
+    const fade = Math.max(0.05, Number(mix.bgmCrossfadeSeconds) || 0);
+    const now = context.currentTime;
+    for (const [key, bed] of this.heldBeds) {
+      if (wanted.has(key)) continue;
+      bed.gain.gain.cancelScheduledValues(now);
+      bed.gain.gain.setTargetAtTime(0, now, fade / 3);
+      try { bed.source.stop(now + fade); } catch {}
+      this.heldBeds.delete(key);
+    }
+    for (const [key, target] of wanted) {
+      let bed = this.heldBeds.get(key);
+      if (!bed) {
+        const buffer = await this.buffer(target.assetId, context);
+        if (generation !== this.generation) return;
+        if (!buffer) continue;
+        const source = context.createBufferSource(), gain = context.createGain();
+        source.buffer = buffer; source.loop = true; gain.gain.value = 0;
+        source.connect(gain).connect(context.destination);
+        source.start();
+        bed = { source, gain, base: target.base };
+        this.heldBeds.set(key, bed);
+      }
+      bed.gain.gain.setTargetAtTime(Math.max(0, target.base * target.gain), context.currentTime, 0.12);
+    }
+  }
+
+  private releaseHeldBedDucking(): void {
+    const context = this.audioContext;
+    if (!context) return;
+    for (const bed of this.heldBeds.values()) bed.gain.gain.setTargetAtTime(Math.max(0, bed.base), context.currentTime, 0.3);
+  }
+
+  private async scheduleAudio(events: AudioScheduleEvent[], offset: number, destination: AudioNode, audible = true, generation = this.generation): Promise<{ context: AudioContext; base: number }> {
     const context = await this.context();
+    if(generation!==this.generation)return {context,base:context.currentTime};
     const prepared: Array<{ event: AudioScheduleEvent; buffer: AudioBuffer }> = [];
     for (const event of events) {
       if (event.end !== undefined && event.end <= offset) continue;
       const buffer = await this.buffer(event.assetId, context);
+      if(generation!==this.generation)return {context,base:context.currentTime};
       if (buffer) prepared.push({ event, buffer });
     }
     const mix = audioSettings(this.performance);
@@ -284,39 +384,62 @@ export class BrowserReplayPlayer {
     this.stop();
     const generation = ++this.generation;
     const context = await this.context();
-    await this.scheduleAudio(buildAudioSchedule(this.performance), fromTime, context.destination, false);
+    if(generation!==this.generation)return;
+    await this.scheduleAudio(buildAudioSchedule(this.performance), fromTime, context.destination, false, generation);
+    if(generation!==this.generation)return;
     const wall = performance.now() / 1000 + 0.08;
     const tick = async (): Promise<void> => {
       if (generation !== this.generation) return;
       const time = fromTime + Math.max(0, performance.now() / 1000 - wall);
       if (time >= this.performance.duration) { this.stop(); return; }
       const located = await this.renderer.renderAt(time);
+      if(generation!==this.generation)return;
       if (located) this.callbacks.onTime?.(time, located.index);
       this.raf = requestAnimationFrame(() => { void tick(); });
     };
     this.raf = requestAnimationFrame(() => { void tick(); });
   }
 
-  async playLine(index: number): Promise<void> {
+  /** Resolves once the line is started. `holdBeds` is the VN mode: BGM/ambient outlive the line. */
+  async playLine(index: number, options: { holdBeds?: boolean } = {}): Promise<void> {
     const line = this.performance.lines[index]; if (!line) return;
-    this.stop();
+    const holdBeds = Boolean(options.holdBeds);
+    if (holdBeds) this.stopLine(); else this.stop();
     const generation = ++this.generation;
     const context = await this.context();
-    const events = buildAudioSchedule(this.performance).filter(event => event.kind === 'bgm' || event.kind === 'ambient' || (event.start >= line.start && event.start < line.end));
-    await this.scheduleAudio(events, line.start, context.destination, false);
+    if(generation!==this.generation)return;
+    if(holdBeds){await this.syncHeldBeds(line,context,generation);if(generation!==this.generation)return;}
+    const events = buildAudioSchedule(this.performance).filter(event => event.kind === 'bgm' || event.kind === 'ambient' ? !holdBeds : (event.start >= line.start && event.start < line.end));
+    await this.scheduleAudio(events, line.start, context.destination, false,generation);
+    if(generation!==this.generation)return;
     const wall = performance.now() / 1000 + 0.08;
     const tick = async (): Promise<void> => {
       if (generation !== this.generation) return;
       const local = Math.max(0, performance.now() / 1000 - wall);
-      if (local >= line.duration) { this.stop(); await this.renderer.renderLine(index, line.duration); return; }
+      if (local >= line.duration) {
+        if (holdBeds) { this.stopLine(); this.releaseHeldBedDucking(); } else this.stop();
+        await this.renderer.renderLine(index, line.duration);
+        return;
+      }
       await this.renderer.renderLine(index, local);
+      if(generation!==this.generation)return;
       this.callbacks.onTime?.(line.start + local, index);
       this.raf = requestAnimationFrame(() => { void tick(); });
     };
     this.raf = requestAnimationFrame(() => { void tick(); });
   }
 
+  /** Like playLine, but resolves when the line has finished or was stopped. */
+  async playLineUntilEnd(index: number, options: { holdBeds?: boolean } = {}): Promise<void> {
+    if (!this.performance.lines[index]) return;
+    const started = this.playLine(index, options);
+    const finished = new Promise<void>(resolve => { this.lineFinished = resolve; });
+    await started;
+    await finished;
+  }
+
   private async decodeAudioAsset(assetId: string, context: AudioContext): Promise<AudioBuffer | null> {
+    if (assetId.startsWith('blip:')) return synthesizeBlip(assetId, context);
     try {
       const bytes = await sourceArrayBuffer(await this.resolveAsset(assetId));
       if (!bytes) return null;
@@ -334,8 +457,14 @@ export class BrowserReplayPlayer {
     sampleRate = 48_000
   ): Promise<AudioBuffer> {
     const frameCount = Math.max(1, Math.ceil(chunkDuration * sampleRate));
-    const offline = new OfflineAudioContext(2, frameCount, sampleRate);
     const mix = audioSettings(this.performance);
+    // A fresh limiter outputs ~6 ms of silence and has no gain history. Render a little earlier and
+    // discard that part so chunks join without a gap.
+    const latencyFrames = mix.limiter?.enabled ? Math.round(0.006 * sampleRate) : 0;
+    const leadFrames = mix.limiter?.enabled ? Math.round(Math.min(chunkStart, 0.1) * sampleRate) : 0;
+    const renderStart = chunkStart - leadFrames / sampleRate;
+    const totalFrames = leadFrames + frameCount + latencyFrames;
+    const offline = new OfflineAudioContext(2, totalFrames, sampleRate);
     const master = offline.createGain();
     master.gain.value = Math.max(0, Number(mix.masterVolume) || 0);
     let tail: AudioNode = master;
@@ -346,12 +475,12 @@ export class BrowserReplayPlayer {
       tail.connect(limiter); tail = limiter;
     }
     tail.connect(offline.destination);
-    const chunkEnd = chunkStart + chunkDuration;
+    const chunkEnd = renderStart + totalFrames / sampleRate;
     for (const event of events) {
       const buffer = buffers.get(event.assetId);
       if (!buffer || buffer.duration <= 0) continue;
       const naturalEnd = event.loop ? (event.end ?? this.performance.duration) : Math.min(event.end ?? Infinity, event.start + buffer.duration);
-      const overlapStart = Math.max(chunkStart, event.start);
+      const overlapStart = Math.max(renderStart, event.start);
       const overlapEnd = Math.min(chunkEnd, naturalEnd);
       if (overlapEnd <= overlapStart) continue;
       const source = offline.createBufferSource();
@@ -361,13 +490,18 @@ export class BrowserReplayPlayer {
       source.loop = event.loop;
       panner.pan.value = Math.max(-1, Math.min(1, Number(event.pan) || 0));
       source.connect(gain).connect(panner).connect(master);
-      applyEnvelope(gain.gain, event, 0, chunkStart, this.performance);
+      applyEnvelope(gain.gain, event, 0, renderStart, this.performance);
       const seek = Math.max(0, overlapStart - event.start);
       const offset = event.loop ? seek % buffer.duration : seek;
-      source.start(overlapStart - chunkStart, offset);
-      source.stop(overlapEnd - chunkStart);
+      source.start(overlapStart - renderStart, offset);
+      source.stop(overlapEnd - renderStart);
     }
-    return await offline.startRendering();
+    const rendered = await offline.startRendering();
+    if (!leadFrames && !latencyFrames) return rendered;
+    const output = new AudioBuffer({ length: frameCount, numberOfChannels: 2, sampleRate });
+    const skip = leadFrames + latencyFrames;
+    for (let channel = 0; channel < 2; channel += 1) output.copyToChannel(rendered.getChannelData(channel).subarray(skip, skip + frameCount), channel);
+    return output;
   }
 
   /**
@@ -440,8 +574,8 @@ export class BrowserReplayPlayer {
       decodeContext = await this.context();
     }
 
-    await output.start();
     try {
+      await output.start();
       throwIfAborted();
       const duration = Math.max(0, this.performance.duration);
       const totalFrames = Math.max(1, Math.ceil(duration * fps));
@@ -503,6 +637,8 @@ export class BrowserReplayPlayer {
     } catch (error) {
       try { await output.cancel(); } catch {}
       throw error;
+    } finally {
+      try{audioSource?.close?.();}catch{}try{videoSource.close?.();}catch{}decoded.clear();
     }
   }
 
@@ -510,22 +646,29 @@ export class BrowserReplayPlayer {
     this.stop();
     const fps = options.fps ?? 30;
     const stream = this.renderer.element.captureStream(fps);
+    const tracks=stream.getTracks();let stopRecorder=()=>{};
+    try {
     const context = await this.context();
     const destination = context.createMediaStreamDestination();
+    tracks.push(...destination.stream.getTracks());
     await this.scheduleAudio(buildAudioSchedule(this.performance), 0, destination, false);
     const combined = new MediaStream([...stream.getVideoTracks(), ...destination.stream.getAudioTracks()]);
     const mimeTypes = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
     const mimeType = mimeTypes.find(type => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type));
     if (!mimeType) throw new Error('This browser does not support WebM MediaRecorder export. Use current Chrome/Edge.');
     const recorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: options.videoBitsPerSecond ?? 5_500_000 });
+    stopRecorder=()=>{if(recorder.state!=='inactive')recorder.stop();};
     const chunks: Blob[] = [];
     recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
-    const done = new Promise<void>((resolve, reject) => { recorder.onstop = () => resolve(); recorder.onerror = event => reject(event); });
+    let recorderError:unknown;
+    const done = new Promise<void>((resolve, reject) => { recorder.onstop = () => resolve(); recorder.onerror = event => {recorderError=event;reject(event);}; });
+    void done.catch(()=>{});
     recorder.start(500);
     const wall = performance.now() / 1000 + 0.08;
     await new Promise<void>((resolve, reject) => {
       const frame = async (): Promise<void> => {
         try {
+          if(recorderError)throw recorderError;
           const t = Math.max(0, performance.now() / 1000 - wall);
           if (t >= this.performance.duration) { await this.renderer.renderAt(Math.max(0, this.performance.duration - 0.001)); options.onProgress?.(1); recorder.stop(); resolve(); return; }
           await this.renderer.renderAt(t); options.onProgress?.(this.performance.duration ? t / this.performance.duration : 1);
@@ -536,5 +679,10 @@ export class BrowserReplayPlayer {
     });
     await done;
     return new Blob(chunks, { type: 'video/webm' });
+    } finally {
+      try{stopRecorder();}catch{}
+      for(const track of tracks)track.stop();
+      this.stop();
+    }
   }
 }

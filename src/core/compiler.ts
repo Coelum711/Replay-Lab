@@ -1,11 +1,13 @@
 import { estimateDuration } from './project.js';
-import type { CameraEffect, CameraTransform, CgPresentation, CustomObjectRuntimeState, DirectorBeat, DirectorBeatChange, MediaAsset, PerformanceDocument, PerformanceState, ReplayCharacter, ReplayLine, ReplayProject, SceneGraphSettings, SceneMaskSpec, StagePosition, StageTransform, TransitionEffect } from './types.js';
+import { parseTextTags } from './text-tags.js';
+import type { CameraEffect, CameraTransform, CgPresentation, CustomObjectRuntimeState, DirectorBeat, DirectorBeatChange, MediaAsset, PerformanceDocument, PerformanceState, ReplayCharacter, ReplayDirectorCommand, ScreenShake, ScreenEmote, EmoteKind, ScreenFilterKind, ReplayLine, ReplayProject, SceneGraphSettings, SceneMaskSpec, StagePosition, StageTransform, TransitionEffect } from './types.js';
 import { resolveCachedSpeech } from '../speech/policy.js';
 import { resolvePunctuationPauseTiming, resolveSpeechPauseScale, speechPauseExtraSeconds } from '../speech/pause.js';
 import { normalizePuppetRig } from '../puppet/rig.js';
 import { normalizeFaceFit } from './face.js';
 import { buildDirectorBeats } from './beats.js';
 import { buildSceneGraphSnapshot, mergeSceneGraphPatch, normalizeSceneGraphSettings } from './scene-graph.js';
+import { cleanCameraTransform as sanitizeCameraTransform, DEFAULT_CAMERA_TRANSFORM } from './camera.js';
 
 function characterMap(project: ReplayProject): Map<string, ReplayCharacter> {
   return new Map(project.characters.map(c => [c.id, c]));
@@ -19,7 +21,6 @@ interface AutoStageFrame {
 
 const STAGE_SLOTS: ConcreteStagePosition[] = ['left', 'center', 'right'];
 
-const DEFAULT_CAMERA_TRANSFORM: CameraTransform = { x: 0.5, y: 0.5, zoom: 1 };
 const DEFAULT_CG_PRESENTATION: CgPresentation = { fit: 'contain', hideCharacters: false, hideTextbox: false, motion: 'none', mask: null, duration: 0.6 };
 
 function sanitizeSceneMask(value?: SceneMaskSpec | null): SceneMaskSpec | null {
@@ -51,17 +52,6 @@ function sanitizeCgPresentation(value?: Partial<CgPresentation> | null): CgPrese
     motion: ['slow-push','pan-left','pan-right'].includes(String(value?.motion)) ? value!.motion as CgPresentation['motion'] : 'none',
     mask: sanitizeSceneMask(value?.mask),
     duration: Number.isFinite(Number(value?.duration)) ? Math.max(0.05, Math.min(30, Number(value!.duration))) : 0.6
-  };
-}
-
-function sanitizeCameraTransform(value: CameraTransform): CameraTransform {
-  const finite = (input: number, fallback: number) => Number.isFinite(Number(input)) ? Number(input) : fallback;
-  const zoom = Math.max(1, Math.min(4, finite(value.zoom, 1)));
-  const half = 0.5 / zoom;
-  return {
-    x: Math.max(half, Math.min(1 - half, finite(value.x, 0.5))),
-    y: Math.max(half, Math.min(1 - half, finite(value.y, 0.5))),
-    zoom
   };
 }
 
@@ -190,8 +180,12 @@ function applyStageCommand(
   index = 0
 ): { roster: string[]; positions: Record<string, StagePosition> } {
   const command = line.type === 'command' ? line.command : null;
-  if (!command || !['enter', 'dismiss'].includes(command.kind) || !command.characterId) return { roster, positions };
+  if (!command || !['enter', 'dismiss', 'move'].includes(command.kind) || !command.characterId) return { roster, positions };
   const id = command.characterId;
+  if (command.kind === 'move') {
+    if (!roster.includes(id) || !command.position || command.position === 'auto') return { roster, positions };
+    return { roster, positions: { ...positions, [id]: command.position } };
+  }
   if (command.kind === 'dismiss') {
     const nextRoster = roster.filter(item => item !== id);
     const nextPositions = { ...positions };
@@ -223,7 +217,7 @@ function applyStageCommand(
 
 function commandBlockingLine(line: ReplayLine): ReplayLine {
   const command = line.type === 'command' ? line.command : null;
-  if (command?.kind !== 'enter' || !command.characterId || !command.position || command.position === 'auto') return line;
+  if ((command?.kind !== 'enter' && command?.kind !== 'move') || !command.characterId || !command.position || command.position === 'auto') return line;
   return { ...line, stagePositions: { ...(line.stagePositions ?? {}), [command.characterId]: command.position } };
 }
 
@@ -374,6 +368,15 @@ function buildPerformanceDirectorBeats(project: ReplayProject, autoFrames: AutoS
   return beats.sort((a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex);
 }
 
+function emoteFromCommand(command: ReplayDirectorCommand): ScreenEmote {
+  return { characterId: command.characterId ?? '', kind: (command.value ?? 'surprise') as EmoteKind, offset: 0, duration: Math.max(0.01, Number(command.duration) || 1.6) };
+}
+
+function shakeFromCommand(command: ReplayDirectorCommand): ScreenShake {
+  const [pattern, amplitude, frequency] = String(command.value ?? '').split(' ');
+  return { offset: 0, duration: Math.max(0.01, Number(command.duration) || 1), amplitude: Number(amplitude) || 12, frequency: Number(frequency) || 14, pattern: pattern === 'fixed' ? 'fixed' : 'random' };
+}
+
 export function compilePerformance(project: ReplayProject): PerformanceDocument {
   const chars = characterMap(project);
   const assets = new Map<string, MediaAsset>(project.assets.map(asset => [asset.id, asset]));
@@ -406,7 +409,10 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
   }
   const lines: PerformanceDocument['lines'] = [];
   let cursor = 0;
+  let currentFilter: ScreenFilterKind | null = null;
   let explicitPositions: Record<string, StagePosition> = {};
+  // Once a row uses enter/exit, state.roster owns the stage (it may legitimately be empty).
+  let explicitStage = false;
   let carriedTransforms: Record<string, StageTransform> = {};
   let carriedCameraTransform: CameraTransform = { ...DEFAULT_CAMERA_TRANSFORM };
   let currentSceneKey = sceneKeys[0] ?? '0:0';
@@ -423,11 +429,12 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     const sceneKey = sceneKeys[index] ?? '0:0';
     if (index > 0 && sceneKey !== currentSceneKey) {
       carriedTransforms = {};
+      for (const visual of Object.values(state.characterVisuals)) delete visual.transform;
       carriedCameraTransform = { ...DEFAULT_CAMERA_TRANSFORM };
       sceneGraphState = normalizeSceneGraphSettings(projectSceneGraph);
     }
     currentSceneKey = sceneKey;
-    let cameraPlacementSource: 'auto' | 'manual' | 'inherited' = carriedCameraTransform.zoom !== 1 || carriedCameraTransform.x !== 0.5 || carriedCameraTransform.y !== 0.5 ? 'inherited' : 'auto';
+    let cameraPlacementSource: 'auto' | 'manual' | 'inherited' = carriedCameraTransform.zoom !== 1 || carriedCameraTransform.x !== 0.5 || carriedCameraTransform.y !== 0.5 || !!carriedCameraTransform.yaw || !!carriedCameraTransform.pitch ? 'inherited' : 'auto';
     if (line.cameraTransform === null) {
       carriedCameraTransform = { ...DEFAULT_CAMERA_TRANSFORM };
       cameraPlacementSource = 'manual';
@@ -437,7 +444,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     }
     const localTransformIds = new Set<string>();
     for (const [id, rawTransform] of Object.entries(line.stageTransforms ?? {})) {
-      if (rawTransform === null) { delete carriedTransforms[id]; continue; }
+      if (rawTransform === null) { delete carriedTransforms[id]; if (state.characterVisuals[id]) delete state.characterVisuals[id]!.transform; continue; }
       carriedTransforms[id] = sanitizeStageTransform(rawTransform);
       localTransformIds.add(id);
     }
@@ -445,7 +452,8 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     // Preserve the historical index-0 behavior: a first-line enter/exit event
     // seeds from the first automatically-directed frame.
     const previousAutoFrame = autoFrames[Math.max(0, index - 1)] ?? { roster: [], positions: {} };
-    if (!state.roster.length && (line.scene?.enterIds?.length || line.scene?.exitIds?.length)) {
+    if (!explicitStage && (line.scene?.enterIds?.length || line.scene?.exitIds?.length)) {
+      explicitStage = true;
       state.roster = [...previousAutoFrame.roster];
       explicitPositions = { ...previousAutoFrame.positions };
     }
@@ -495,6 +503,16 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     }
     if (line.type === 'command' && line.command?.kind === 'dismiss' && line.command.characterId) delete carriedTransforms[line.command.characterId];
     for (const id of line.scene?.enterIds ?? []) if (!state.roster.includes(id)) state.roster.push(id);
+    if (explicitStage) {
+      const applied = applyStageCommand(line, state.roster, explicitPositions, chars, project.settings.maxOnStage);
+      state.roster = [...applied.roster];
+      explicitPositions = applied.positions;
+      const joining = visibleSpeaker(line, chars);
+      if (joining && line.stageMode !== 'custom' && !state.roster.includes(joining) && !line.scene?.exitIds?.includes(joining)) {
+        while (state.roster.length >= project.settings.maxOnStage) state.roster.shift();
+        state.roster.push(joining);
+      }
+    }
 
     if (line.expressionMode === 'set' && line.expression) {
       state.expressions[line.speakerId] = line.expression;
@@ -506,10 +524,10 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     let positions: Record<string, StagePosition>;
     if (line.stageMode === 'custom') {
       roster = (line.stageIds ?? []).filter(id => chars.has(id));
-      positions = solveStagePositions(roster, chars, line, {}, null);
-    } else if (state.roster.length) {
+      positions = solveStagePositions(roster, chars, line, { ...(autoFrames[index]?.positions ?? {}), ...(explicitStage ? explicitPositions : {}) }, null);
+    } else if (explicitStage) {
       roster = state.roster.filter(id => chars.get(id)?.showOnStage);
-      positions = solveStagePositions(roster, chars, line, explicitPositions, null);
+      positions = solveStagePositions(roster, chars, commandBlockingLine(line), explicitPositions, null);
       explicitPositions = { ...positions };
     } else {
       const frame = autoFrames[index] ?? { roster: [], positions: {} };
@@ -534,6 +552,8 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       };
     }
 
+    if (line.type === 'command' && line.command?.kind === 'filter') currentFilter = line.command.value && line.command.value !== 'none' ? line.command.value as ScreenFilterKind : null;
+    const tagged = line.type === 'command' ? { plain: line.text, ranges: [] } : parseTextTags(line.text);
     const voiceDuration = line.audioAssetId ? Number(assets.get(line.audioAssetId)?.metadata?.duration) : NaN;
     const speaker = chars.get(line.speakerId);
     const speech = line.type === 'command'
@@ -541,14 +561,16 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       : resolveCachedSpeech(project, line);
     const pauseExtra = line.type === 'command' ? 0 : speechPauseExtraSeconds(speech.text, resolveSpeechPauseScale(project, line), resolvePunctuationPauseTiming(project, line));
     const commandDuration = line.command?.kind === 'wait' ? Math.max(0, Number(line.command.duration) || 0)
+      : line.command?.kind === 'flash' ? Math.max(0.01, Number(line.command.duration) || 0.5)
+      : line.command?.kind === 'card' ? Math.max(0.01, Number(line.command.duration) || 2.6)
       : line.command?.kind === 'motion' ? Math.max(0.01, Number(line.command.duration) || 0.5)
       : line.command?.kind === 'camera' ? Math.max(0.2, line.duration ?? 0.5)
-      : line.command?.kind === 'transition' ? Math.max(0.2, line.duration ?? 0.42)
+      : line.command?.kind === 'transition' ? Math.max(0.2, line.duration ?? (Number(line.command.duration) || (line.command.value === 'fade' || line.command.value === 'cut' ? 0.42 : 0.7)))
       : 0.04;
     const voiceHold = Math.max(0, Number(line.audioMix?.preRoll) || 0) + Math.max(0, Number(line.audioMix?.postRoll) || 0) + Math.max(0, Number(line.audioMix?.voiceOffset) || 0);
     const duration = line.type === 'command'
-      ? (parallelCommand && line.command?.kind !== 'wait' ? 0 : Math.max(0, line.duration ?? commandDuration))
-      : Math.max(0.2, line.duration ?? (Number.isFinite(voiceDuration) && voiceDuration > 0 ? voiceDuration + voiceHold : estimateDuration(line.text) + pauseExtra));
+      ? (parallelCommand && line.command?.kind !== 'wait' && line.command?.kind !== 'flash' && line.command?.kind !== 'card' ? 0 : Math.max(0, line.duration ?? commandDuration))
+      : Math.max(0.2, line.duration ?? (Number.isFinite(voiceDuration) && voiceDuration > 0 ? voiceDuration + voiceHold : estimateDuration(tagged.plain) + pauseExtra));
     const start = cursor;
     const end = start + duration;
     const performanceSpeakerId = commandMotion?.characterId ?? line.speakerId;
@@ -578,6 +600,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       characterVisuals: Object.fromEntries(Object.entries(state.characterVisuals).map(([id, visual]) => [id, { ...visual, ...(visual.transform ? { transform: { ...visual.transform } } : {}) }])),
       bubble: line.bubble ? { ...line.bubble, metadata: line.bubble.metadata ? { ...line.bubble.metadata } : undefined } : state.bubble ? { ...state.bubble } : null
     };
+    const blip = line.type !== 'command' && !line.audioAssetId && ['dialogue', 'narration', 'system'].includes(line.type) ? chars.get(line.speakerId)?.textBlip ?? null : null;
     const performanceTransition = parallelTransitionByTarget.get(line.id) ?? (line.type === 'command' && line.command?.kind === 'transition' ? (line.command.value as any) : line.scene?.transition ?? 'cut');
     lines.push({
       index: index + 1,
@@ -588,9 +611,14 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       speakerId: performanceSpeakerId,
       speakerName: performanceSpeaker?.name ?? 'Unknown',
       type: line.type,
-      text: line.text,
-      textEffect: line.textEffect ?? 'all',
-      textEffectDuration: Math.max(0, line.textEffectDuration ?? Math.min(duration * 0.72, Math.max(0.35, Array.from(line.text).length * 0.055))),
+      text: tagged.plain,
+      textEffect: blip && (line.textEffect ?? 'all') === 'all' ? 'w2w' : line.textEffect ?? 'all',
+      textEffectDuration: Math.max(0, line.textEffectDuration ?? Math.min(duration * 0.72, Math.max(0.35, Array.from(tagged.plain).length * 0.055))),
+      ...(tagged.ranges.length ? { textTags: tagged.ranges } : {}),
+      ...(blip ? { textBlip: { ...blip } } : {}),
+      screenFilter: currentFilter,
+      ...(line.type === 'command' && line.command?.kind === 'emote' && line.command.characterId ? { emoteEvent: emoteFromCommand(line.command) } : {}),
+      ...(line.type === 'command' && line.command?.kind === 'card' ? { card: { title: line.command.value ?? '', subtitle: line.command.target ?? '', duration } } : {}),
       speechText: speech.text,
       speechLanguage: speech.language,
       translationPending: speech.translationPending,
@@ -616,15 +644,40 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       bubble: line.bubble ? { ...line.bubble, metadata: line.bubble.metadata ? { ...line.bubble.metadata } : undefined } : null,
       dialogueStyleId: line.dialogueStyleId ?? null,
       stageMethod: commandMotion ? { ...commandMotion.spec } : line.stageMethod ? { ...line.stageMethod } : null,
-      sceneGraph: buildSceneGraphSnapshot(project, { state: performanceState, stage: performanceStage, lineType: line.type, diceVisible: !!(line.diceRolls?.length), wheelVisible: !!line.wheel, hitPointVisible: !!line.hitPoint, transition: performanceTransition, sceneGraphSettings: sceneGraphState }),
+      sceneGraph: buildSceneGraphSnapshot(project, { state: performanceState, stage: performanceStage, lineType: line.type, diceVisible: !!(line.diceRolls?.length), wheelVisible: !!line.wheel, hitPointVisible: !!line.hitPoint, transition: performanceTransition, sceneGraphSettings: sceneGraphState, cameraTransform: carriedCameraTransform }),
       directorBeatId: beatByLineId.get(line.id)?.id ?? null,
       audioAssetId: line.audioAssetId,
       sfxAssetId: line.type === 'command' && line.command?.kind === 'sfx' ? line.command.assetId : line.sfxAssetId,
+      ...(line.type === 'command' && line.command?.kind === 'shake' ? { shakeEvent: shakeFromCommand(line.command) } : {}),
+      ...(line.type === 'command' && line.command?.kind === 'flash' ? { flash: { color: line.command.value ?? '#000000', duration: Math.max(0.01, Number(line.command.duration) || 0.5) } } : {}),
       audioMix: { ...(line.audioMix ?? {}) },
+      ...(line.type !== 'command' && line.duration != null ? { voiceClip: true } : {}),
       bgmFadeSeconds: line.scene?.bgmFadeSeconds ?? null
     });
     cursor = end + (index === project.lines.length - 1 ? 0 : line.type === 'command' ? 0 : 0.18);
   });
+
+  // An emote stays up across the following lines like a shake does.
+  for (const source of lines) {
+    const emote = source.emoteEvent;
+    if (!emote) continue;
+    const from = source.start, until = source.start + emote.duration;
+    for (const target of lines) {
+      if (target.end <= from || target.start >= until) continue;
+      (target.emotes ??= []).push({ ...emote, offset: from - target.start });
+    }
+  }
+
+  // A shake keeps running across the following lines, so each line carries the part it overlaps.
+  for (const source of lines) {
+    const shake = source.shakeEvent;
+    if (!shake) continue;
+    const from = source.start, until = source.start + shake.duration;
+    for (const target of lines) {
+      if (target.end <= from || target.start >= until) continue;
+      (target.shakes ??= []).push({ ...shake, offset: from - target.start });
+    }
+  }
 
   return {
     format: 'ReplayLabPerformance',

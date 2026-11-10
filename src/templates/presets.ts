@@ -27,5 +27,7 @@ export const BUILTIN_TEMPLATES: ReplayTemplate[] = [
 
 export function applyTemplate(project: ReplayProject, template: ReplayTemplate): ReplayProject {
   project.settings = { ...project.settings, ...template.settings, templateId: template.id };
+  if (template.settings.bgmVolume !== undefined) project.settings.audioMix.bgmVolume = template.settings.bgmVolume;
+  if (template.settings.sfxVolume !== undefined) project.settings.audioMix.sfxVolume = template.settings.sfxVolume;
   return project;
 }

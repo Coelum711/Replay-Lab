@@ -113,15 +113,17 @@ export class VNReplayRuntime {
 
   /** Execute zero-UI director events in sequence, then stop on the next visible VN line. */
   private async showForwardSkippingCommands(index: number, playAnimation: boolean): Promise<void> {
+    this.generation += 1;
+    const generation = this.generation;
+    this.clearTimer();
     let target = Math.max(0, Math.min(index, Math.max(0, this.performance.lines.length - 1)));
     while (target < this.performance.lines.length && this.performance.lines[target]?.type === 'command') {
       this._index = target;
       const line = this.performance.lines[target]!;
       this.remember(target);
-      this.player.stop();
-      if (this._skip) await this.renderer.renderLine(target, line.duration);
-      else if (line.duration > 0.06) await this.player.playLine(target);
-      else await this.renderer.renderLine(target, line.duration);
+      if (!this._skip && line.duration > 0.06) await this.player.playLineUntilEnd(target, { holdBeds: true });
+      else { this.player.stopLine(); await this.renderer.renderLine(target, line.duration); }
+      if (generation !== this.generation) return;
       target += 1;
     }
     if (target >= this.performance.lines.length) {
@@ -163,13 +165,13 @@ export class VNReplayRuntime {
     this.generation += 1;
     const generation = this.generation;
     this.clearTimer();
-    this.player.stop();
+    this.player.stopLine();
     const line = this.performance.lines[index];
     if (!line) return;
     this.remember(index);
     this.callbacks.onLine?.(index, line);
     if (this._skip) await this.renderer.renderLine(index, line.duration);
-    else if (playAnimation) await this.player.playLine(index);
+    else if (playAnimation) await this.player.playLine(index, { holdBeds: true });
     else await this.renderer.renderLine(index, 0);
     if (generation === this.generation) await this.reschedule();
   }
