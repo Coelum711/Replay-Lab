@@ -99,7 +99,7 @@ export function buildAudioSchedule(performance: PerformanceDocument): AudioSched
     events.push(...textBlipEvents(line, mix.sfxVolume));
     if (line.sfxAssetId) events.push({
       assetId: line.sfxAssetId,
-      start: line.start,
+      start: line.start + Math.max(0, Math.min(line.duration, Number(line.audioMix?.sfxOffset) || 0)),
       volume: mix.sfxVolume * Math.max(0, Number(line.audioMix?.sfxGain ?? 1)),
       pan: Math.max(-1, Math.min(1, Number(line.audioMix?.sfxPan) || 0)),
       loop: false,

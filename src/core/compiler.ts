@@ -1,3 +1,4 @@
+import { lineMoodText, triggeredExpression } from './acting.js';
 import { estimateDuration } from './project.js';
 import { parseTextTags } from './text-tags.js';
 import type { CameraEffect, CameraTransform, CgPresentation, CustomObjectRuntimeState, DirectorBeat, DirectorBeatChange, MediaAsset, PerformanceDocument, PerformanceState, ReplayCharacter, ReplayDirectorCommand, ScreenShake, ScreenEmote, EmoteKind, ScreenFilterKind, ReplayLine, ReplayProject, SceneGraphSettings, SceneMaskSpec, StagePosition, StageTransform, TransitionEffect } from './types.js';
@@ -514,6 +515,11 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       }
     }
 
+    for (const [id, expression] of Object.entries(line.scene?.expressions ?? {})) {
+      if (!expression) continue;
+      state.expressions[id] = expression;
+      state.characterVisuals[id] = { ...(state.characterVisuals[id] ?? { position: 'auto' }), expression };
+    }
     if (line.expressionMode === 'set' && line.expression) {
       state.expressions[line.speakerId] = line.expression;
       const previous = state.characterVisuals[line.speakerId];
@@ -588,6 +594,9 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
         ? 'manual'
         : carriedTransforms[id] ? 'inherited' : 'auto') as 'auto' | 'manual' | 'inherited'
     }));
+    // Trigger words pick a sprite for this line only; an explicit expression on the line wins.
+    const moodExpression = line.type === 'dialogue' && line.expressionMode !== 'set' && !line.scene?.expressions?.[line.speakerId]
+      ? triggeredExpression(chars.get(line.speakerId)?.expressionTriggers, lineMoodText(line)) : null;
     const performanceState: PerformanceState = {
       background: state.background,
       cg: state.cg,
@@ -596,7 +605,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       bgm: state.bgm,
       ambient: state.ambient,
       roster: [...roster],
-      expressions: { ...state.expressions },
+      expressions: { ...state.expressions, ...(moodExpression ? { [line.speakerId]: moodExpression } : {}) },
       characterVisuals: Object.fromEntries(Object.entries(state.characterVisuals).map(([id, visual]) => [id, { ...visual, ...(visual.transform ? { transform: { ...visual.transform } } : {}) }])),
       bubble: line.bubble ? { ...line.bubble, metadata: line.bubble.metadata ? { ...line.bubble.metadata } : undefined } : state.bubble ? { ...state.bubble } : null
     };
@@ -624,7 +633,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       translationPending: speech.translationPending,
       chapterTitle: line.chapterTitle,
       sceneTitle: line.sceneTitle,
-      expression: state.expressions[line.speakerId] ?? line.expression ?? 'default',
+      expression: moodExpression ?? state.expressions[line.speakerId] ?? line.expression ?? 'default',
       mouth: line.mouth ?? 'auto',
       mouthCues: line.mouthCues ?? [],
       stage: performanceStage,

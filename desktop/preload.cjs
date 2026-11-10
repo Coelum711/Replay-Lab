@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('replayDesktop',{
   workspace:request=>ipcRenderer.invoke('replay:workspace',request),
   recent:()=>ipcRenderer.invoke('replay:recent'),
   saveDialog:request=>ipcRenderer.invoke('replay:save-dialog',request),
+  exportToFolder:request=>ipcRenderer.invoke('replay:export-to-folder',request),
   stream:request=>ipcRenderer.invoke('replay:stream',request),
   localFetch:request=>ipcRenderer.invoke('replay:local-fetch',request),
   cancelFetch:id=>ipcRenderer.send('replay:cancel-fetch',id),

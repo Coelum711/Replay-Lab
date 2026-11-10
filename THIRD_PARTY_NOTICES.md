@@ -75,3 +75,7 @@ The desktop distribution bundles Electron 44.3.0 (MIT) and Chromium third-party 
 ## SoundTouchJS 2.1.1
 
 本地语调微调使用 @soundtouchjs/core 2.1.1 与 @soundtouchjs/interpolation-strategy-lanczos 2.1.1（MPL-2.0）。可读 JavaScript、包说明及许可声明位于 web/vendor/soundtouch；来源与唯一导入路径修改见其中 REPLAYLAB-NOTICE.md。
+
+## wasm-media-encoders 0.7.0
+
+导出给 RPG Maker 的 Ogg Vorbis 编码使用 [wasm-media-encoders](https://github.com/arseneyr/wasm-media-encoders) 0.7.0（MIT），其中以 WebAssembly 形式包含 libvorbis / libogg（BSD-3-Clause，Xiph.Org）与 LAME（LGPL，本项目不调用）。未修改的文件与许可证位于 web/vendor/wasm-media-encoders，说明见其中 REPLAYLAB-NOTICE.md。
