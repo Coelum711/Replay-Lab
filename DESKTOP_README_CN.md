@@ -1,10 +1,10 @@
-# Replay Lab 0.57.0-dev · Mac 桌面测试版
+# Replay Lab 0.57.1-dev · Mac 桌面测试版
 
 ## 安装与打开
 
 适用于 macOS 13 或更新系统的 Apple Silicon Mac（M 系列芯片）。
 
-1. 解压 `Replay-Lab-0.57.0-Mac-arm64.zip`。
+1. 解压 `Replay-Lab-0.57.1-Mac-arm64.zip`。
 2. 把里面的 `Replay Lab.app` 拖入“应用程序”文件夹。
 3. 双击打开。桌面程序自带运行组件，不需要先启动 Python、Node 或浏览器。
 
