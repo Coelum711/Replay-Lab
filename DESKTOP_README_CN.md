@@ -10,7 +10,7 @@
 
 此版本尚无 Apple Developer ID 签名及公证。首次打开可能出现开发者验证提示；在确认文件来自本次交付后，可在“系统设置 → 隐私与安全性”里针对 Replay Lab 选择“仍要打开”。无需关闭系统整体安全保护。详见 [Apple 的说明](https://support.apple.com/en-euro/guide/mac-help/mh40616/mac)。
 
-这是 Linux 环境交叉打包出的 Mac 应用。包结构与程序逻辑经过检查，仍需要在真实 Mac 上确认启动、系统文件对话框、视频编码和 Voicebox 出声。若出现“应用已损坏”或直接退出，请保留提示截图，不能把它当成普通开发者验证提示处理。
+这个版本在 Apple Silicon Mac 上打包，并在真机上用过启动、打开工程、舞台预览、Voicebox 普通克隆与情绪桥出声。如果提示“应用已损坏”，通常是下载隔离标记导致的，可在终端运行 `xattr -dr com.apple.quarantine "/Applications/Replay Lab.app"` 后再打开；若仍直接退出，请保留提示截图并提 Issue。
 
 ## 本版新增：角色整理、视角与施工台
 
