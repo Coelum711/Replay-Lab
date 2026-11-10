@@ -49,6 +49,8 @@ export interface AudioLineMix {
   sfxGain?: number;
   /** Stereo pan from -1 (left) to +1 (right). */
   sfxPan?: number;
+  /** Seconds after the line starts before its sound effect plays. */
+  sfxOffset?: number;
   /** Voice start offset relative to dialogue start, seconds. */
   voiceOffset?: number;
   /** Hold before spoken audio when line duration follows voice. */
@@ -689,6 +691,8 @@ export interface ReplayCharacter {
   puppet: CharacterPuppetRig;
   /** Shared face-template placement and perspective fit. */
   faceFit: CharacterFaceFit;
+  /** Sprite state → words; a line whose emotion tag or tone mentions one uses that sprite for the line. */
+  expressionTriggers?: Record<string, string[]>;
   /** Typing blip for this character's unvoiced lines; absent means silent typing. */
   textBlip?: TextBlipVoice | null;
   /** Legacy/default voice fallback. */
@@ -885,6 +889,8 @@ export interface ScenePatch {
   sceneGraph?: SceneGraphPatch;
   bgm?: string | null;
   ambient?: string | null;
+  /** Sprite states (expression names) switched from this line on, by character id. */
+  expressions?: Record<string, string>;
   /** Optional per-cue crossfade duration; omitted uses project audio mix default. */
   bgmFadeSeconds?: number | null;
   enterIds?: string[];

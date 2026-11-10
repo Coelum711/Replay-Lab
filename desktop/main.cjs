@@ -101,6 +101,25 @@ async function start(){
     if(result.canceled||!result.filePath)return null;
     const token=await files.openTarget(result.filePath);streamOwners.set(token,event.sender.id);return {token,name:path.basename(result.filePath)};
   });
+  // Writes a handful of exported audio files into a folder the user picks (e.g. a game's audio/se).
+  // Only plain audio files, never overwriting what is already there.
+  handle('replay:export-to-folder',async(event,request)=>{
+    const list=Array.isArray(request?.files)?request.files:[];
+    if(!list.length||list.length>200)throw Error('一次导出 1 到 200 个文件');
+    let total=0;for(const item of list){const size=item?.data?.byteLength??0;if(!size)throw Error('导出文件是空的');total+=size}
+    if(total>300*1024*1024)throw Error('导出内容超过 300 MB，请分批导出');
+    const result=await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender),{title:String(request.title||'选择导出到的文件夹'),buttonLabel:'导出到这里',properties:['openDirectory','createDirectory']});
+    if(result.canceled||!result.filePaths[0])return null;
+    const directory=result.filePaths[0],written=[];
+    for(const item of list){
+      const raw=path.basename(String(item.name||'audio.ogg')).replace(/[\\/:*?"<>|\u0000-\u001f]/g,'_');
+      const ext=path.extname(raw).toLowerCase();if(!['.ogg','.wav'].includes(ext))throw Error(`只能导出 .ogg / .wav：${raw}`);
+      const stem=raw.slice(0,-ext.length)||'audio';let name=stem+ext;
+      for(let n=2;;n++){try{await fs.access(path.join(directory,name));name=`${stem}_${n}${ext}`}catch{break}}
+      await fs.writeFile(path.join(directory,name),Buffer.from(item.data),{flag:'wx'});written.push(name);
+    }
+    return {directory,written};
+  });
   handle('replay:stream',async(event,request)=>{
     if(streamOwners.get(request.token)!==event.sender.id)throw Error('保存流不属于当前窗口');
     if(request.action==='write')return files.chunk(request.token,request.data);

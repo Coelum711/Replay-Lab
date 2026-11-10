@@ -1,4 +1,7 @@
 import { StageDirectEditorController } from './stage-editor-controller.js';
+import { createSoundPicker } from './sound-picker.js';
+import { renderAnimationWorkbench } from './animation-workbench.js';
+import { exportLinesForRpgMaker } from './rpgmaker-export.js';
 import { SceneViewportController } from './scene-viewport-controller.js';
 import { CameraDirectEditorController } from './camera-editor-controller.js';
 import { CharacterIdentityController } from './character-identity-controller.js';
@@ -29,6 +32,7 @@ import {
   locatePerformanceLine,
   makeId,
   assetDirectory,
+  discoverFolderAssets,
   sanitizePathPart,
   persistAssetFile,
   ProjectHistory,
@@ -314,6 +318,7 @@ async function chooseWorkspace(recentId,{replaceRecovered=false}={}){
     if(pending){clearTimeout(saveTimer);saveTimer=setTimeout(()=>void saveIfConnected(),350)}
     invalidateMediaCaches();renderAll();
     try{await refreshWorkspace()}catch(error){$('#workspaceDetail').textContent=`工程已连接，但素材列表读取失败：${error.message||error}`}
+    if(project===owner||!owner)void scanAssetFolders({quiet:true});
     if(reconnect){
       const issues=await diagnoseWorkspaceAssets(owner.assets,chosen);
       if(project!==owner||workspace!==chosen)return;
@@ -692,6 +697,7 @@ function renderCharacters(){
     <details><summary>身份 / 导入别名 <span class="summary-meta">${(character.aliases||[]).length?`${character.aliases.length} 个`:'可选'}</span></summary><div class="disclosure-body"><label class="muted">别名 / 导入名<input data-aliases value="${escapeHtml((character.aliases||[]).join(', '))}" placeholder="例如 Matthew, 马修"></label><div class="muted">只用于识别同一角色的不同导入名；不会改显示名称，也不会自动翻译角色名。</div></div></details>
     <details><summary>声音 / AI 朗读（可选） <span class="summary-meta" data-character-speech-summary></span></summary><div class="stack disclosure-body"><div class="grid2"><label class="muted">默认朗读语言<input data-character-language list="studioLanguageOptions" value="${escapeHtml(character.speech?.defaultLanguage||'')}" placeholder="留空 = 工程朗读语言"></label><label class="muted">停顿强度 <span data-character-pause-value class="summary-meta"></span><input data-character-pause type="range" min="0" max="3" step="0.1" value="${Number(character.speech?.pauseScale??project.settings.speechPauseScale??1).toFixed(1)}"></label></div><div class="grid2"><label class="muted">口音 / 地区<input data-character-accent value="" placeholder="例如 London / Cockney / Texas / 伦敦"></label><label class="muted">口音强度<select data-character-accent-strength><option value="off">关闭</option><option value="light">轻微</option><option value="natural">自然</option><option value="strong">明显</option></select></label></div><div data-character-accent-results class="stack"></div><div data-character-accent-current class="compact-note"></div><div class="row"><button type="button" data-character-pause-reset class="small">停顿继承全局</button><button type="button" data-character-open-voice class="small">打开声音工作台 / 选 Voice</button></div><div class="muted">常用设置直接放在角色页；完整 Voice 试听、批量生成和高级口音规则在声音工作台。</div></div></details>
     <div class="grid2"><label class="muted">允许自动上镜 <input data-show type="checkbox" ${character.showOnStage?'checked':''}></label><label class="muted">默认站位<select data-pos>${['auto','left','center','right'].map(v=>`<option value="${v}" ${character.defaultPosition===v?'selected':''}>${positionLabel(v)}</option>`).join('')}</select></label></div>
+    <div data-expr-triggers class="stack"></div>
     <label class="muted" title="没有配音的台词逐字出现时发出的短促提示音">打字音<select data-blip>${BLIP_PRESETS.map(([key,label])=>`<option value="${key}" ${blipKey(character)===key?'selected':''}>${label}</option>`).join('')}</select></label>
     <label class="row"><input type="checkbox" data-asymmetric-facing ${character.stageFacing.policy==='paired'?'checked':''}><span><strong>这个角色左右不对称</strong><small class="muted" style="display:block">通常不用勾。普通立绘默认可左右镜像；只有伤疤、徽章、眼罩、单侧配件等需要保留方向时，才分别提供左右两版。</small></span></label><div class="muted">未勾选时，舞台上的 ⇆ 只做人工镜像；自动构图不会擅自改变朝向。勾选后改为 L/R 独立素材，系统切换素材而不镜像像素。</div>
     ${character.stageFacing.policy==='paired'?`<div class="card stack paired-facing-assets"><div class="row"><strong>左右独立立绘</strong><span class="muted">未绑定的部分自动继承通用素材</span></div><div class="grid2"><label class="muted">朝画面左 · 角色底图<select data-paired-layer="left:base">${imageAssetOptions(character.stageFacing.variants?.left?.layers?.base)}</select></label><label class="muted">朝画面右 · 角色底图<select data-paired-layer="right:base">${imageAssetOptions(character.stageFacing.variants?.right?.layers?.base)}</select></label></div><details class="advanced-only"><summary>旧式整帧立绘左右版本</summary><div class="grid2 disclosure-body"><label class="muted">朝左 · IDLE<select data-paired-image="left:idle">${imageAssetOptions(character.stageFacing.variants?.left?.images?.idle)}</select></label><label class="muted">朝右 · IDLE<select data-paired-image="right:idle">${imageAssetOptions(character.stageFacing.variants?.right?.images?.idle)}</select></label></div></details><div class="muted">在“可视化摆放”里点 L/R 决定这一时刻使用哪一套；后续行会继承这个方向，系统不会自行交换。</div></div>`:''}
@@ -709,6 +715,11 @@ function renderCharacters(){
   character.speech??={defaultLanguage:null,voices:{},accents:{}};character.speech.voices??={};character.speech.accents??={};
   new CharacterSpeechController({project,escapeHtml,searchAccents,getAccentProfile,normalizeNameKey:normalizeCharacterNameKey,scheduleSave,openVoice:openVoiceWorkbench,setStatus:message=>{$('#importStatus').textContent=message},hasWorkspace:()=>!!workspace}).mount(card,character);
   card.querySelector('[data-kind]').onchange=e=>{character.kind=e.target.value;scheduleSave('修改角色类型',`character-kind:${character.id}`);renderAll()};
+  {const box=card.querySelector('[data-expr-triggers]'),states=characterExpressionNames(character).filter(n=>n!=='default');
+   if(states.length){const title=document.createElement('small');title.className='muted';title.textContent='情绪自动换立绘：台词的情绪标记或语气里出现这些词时，这一句自动用对应立绘（空格分隔）';box.append(title);
+     for(const name of states){const label=document.createElement('label');label.className='muted';label.textContent=`${name} ← `;const input=document.createElement('input');input.dataset.exprTrigger=name;input.placeholder='例如：怒 生气 大吼';input.value=(character.expressionTriggers?.[name]||[]).join(' ');
+       input.onchange=()=>{const words=input.value.split(/[\s,，、]+/).filter(Boolean);character.expressionTriggers={...(character.expressionTriggers||{})};if(words.length)character.expressionTriggers[name]=words;else delete character.expressionTriggers[name];if(!Object.keys(character.expressionTriggers).length)delete character.expressionTriggers;scheduleSave('修改情绪换立绘',`${character.id}:triggers`);compile();renderAll()};
+       label.append(input);box.append(label)}}}
   card.querySelector('[data-blip]').onchange=e=>{const preset=BLIP_VOICES[e.target.value];character.textBlip=preset?{...preset}:null;scheduleSave('修改打字音',`${character.id}:blip`);compile();renderAll()};
   card.querySelector('[data-show]').onchange=e=>{character.showOnStage=e.target.checked;scheduleSave();renderAll()};
   card.querySelector('[data-pos]').onchange=e=>{character.defaultPosition=e.target.value;scheduleSave();renderAll()};
@@ -961,9 +972,9 @@ function directorTemplate(kind){
   if(kind==='transition')return '/transition 圆开';
   return '/';
 }
-function insertDirectorCommand(kind){
+function insertDirectorCommand(kind,override){
   if(!project)return;selectedBeatId=null;
-  const text=directorTemplate(kind);const line=createLine(project,'Director',text,'command');line.mouth='off';line.duration=null;syncCommandLine(line);
+  const text=override??directorTemplate(kind);const line=createLine(project,'Director',text,'command');line.mouth='off';line.duration=null;syncCommandLine(line);
   const at=project.lines.length?Math.min(project.lines.length,selectedIndex+1):0;project.lines.splice(at,0,line);selectedIndex=at;selectedLineIds.clear();scheduleSave('插入导演指令',`command-insert:${line.id}`);renderAll();scrollActiveLineIntoView();
   requestAnimationFrame(()=>{if(kind==='raw'||(kind==='sfx'&&!line.command)){$('#textEdit')?.focus();$('#textEdit')?.select?.()}});
 }
@@ -1001,6 +1012,7 @@ function renderInspectorTakes(){
   const takeHost=$('#lineTakeHost');if(!takeHost)return;takeHost.replaceChildren();const line=currentLine();if(!project||!line||line.type==='command'||selectedBeatId)return;
   clearVoiceNotice(line.id);
   renderLineTakePanel(takeHost,{project,line,workspace,resolveAsset,character:project.characters.find(c=>c.id===line.speakerId),
+    exportRpgMaker:status=>exportForRpgMaker([line],status),
     clearAudio(id,blob){if(blob)runtimeFiles.set(id,blob);else runtimeFiles.delete(id);invalidateMediaCaches()},
     onEdit(label){scheduleSave(label,`${line.id}:voice-edit`)},
     onChanged(save){if(save){scheduleSave('修改配音版本',`${line.id}:voice-take`);void saveIfConnected()}if(currentLine()===line)renderInspectorTakes()},
@@ -1074,10 +1086,47 @@ function setWorkbenchSize(size){
   if(size==='custom'){const height=clampNumber(uiPrefs.workbenchHeight||400,180,Math.max(300,window.innerHeight*.72));bench.style.flex=`0 0 ${height}px`;bench.style.minHeight=`${height}px`}
   document.querySelectorAll('[data-workbench-size]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.workbenchSize===size)));saveUiPrefs();
 }
+function renderAnimationPane(){
+  const host=$('#animationWorkbenchHost');if(!host||!project)return;
+  const keep=(fn)=>{const anchor=currentLine();fn();const at=project.lines.indexOf(anchor);if(at>=0)selectedIndex=at;compile();renderAll()};
+  const commandLine=text=>{const line=createLine(project,'Director',text,'command');line.mouth='off';line.duration=null;syncCommandLine(line);return line};
+  renderAnimationWorkbench(host,{project,line:currentLine(),index:selectedIndex,perf:currentPerf(),performance:performanceDoc,
+    preview(target){selectedIndex=target;renderAll();$('#playLine')?.click()},
+    insertAt(at,text){keep(()=>{project.lines.splice(at,0,commandLine(text));scheduleSave('添加演出',`anim-add:${at}`)})},
+    setText(at,text){const line=project.lines[at];if(!line)return;line.text=text;syncCommandLine(line);scheduleSave('修改演出',`${line.id}:anim`);compile();renderAll()},
+    move(at,dir){const next=at+dir;if(next<0||next>=project.lines.length)return;keep(()=>{[project.lines[at],project.lines[next]]=[project.lines[next],project.lines[at]];scheduleSave('调整演出顺序',`anim-move:${at}`)})},
+    remove(at){keep(()=>{project.lines.splice(at,1);scheduleSave('删除演出',`anim-remove:${at}`)})},
+    jumpToSource(index){if(index<0)return;selectedIndex=index;renderAll();scrollActiveLineIntoView()},
+    openSound(target){const line=project.lines[target];if(line)soundPicker.open(line,{lineNumber:target+1})}});
+}
 function renderStageQuickControls(){
   const line=currentLine(),perf=currentPerf();$('#stageQuickControls').hidden=!line||line.type==='command';
   const names=(perf?.stage||[]).map(actor=>project.characters.find(c=>c.id===actor.characterId)?.name).filter(Boolean);
   $('#stageQuickRoster').textContent=names.length?`当前 ${names.length} 人：${names.join('、')}`:'当前无人上镜';
+  renderStageStates(line,perf);
+}
+/** One dropdown per on-stage character: pick the sprite state they use from this line on. */
+function renderStageStates(line,perf){
+  const host=$('#stageStates');if(!host)return;host.replaceChildren();if(!line||line.type==='command'||!perf)return;
+  const previous=performanceDoc?.lines[selectedIndex-1];
+  for(const actor of perf.stage||[]){
+    const character=project.characters.find(c=>c.id===actor.characterId);if(!character)continue;
+    const names=characterExpressionNames(character);if(names.length<2)continue;
+    const current=perf.state.expressions?.[actor.characterId]||'default',here=line.scene?.expressions?.[actor.characterId];
+    const auto=!here&&actor.characterId===line.speakerId&&line.expressionMode!=='set'&&current!==(previous?.state.expressions?.[actor.characterId]||'default');
+    const label=document.createElement('label');label.className='stage-state';label.style.cssText='color:#b8b2c8;flex-basis:auto';label.textContent=`${character.name} `;
+    const select=document.createElement('select');select.dataset.stageState=actor.characterId;
+    for(const name of names){const option=document.createElement('option');option.value=name;option.textContent=name==='default'?'默认':name;select.append(option)}
+    select.value=names.includes(current)?current:'default';
+    select.onchange=()=>{const inherited=previous?.state.expressions?.[actor.characterId]||'default';line.scene??={};line.scene.expressions={...(line.scene.expressions||{})};
+      if(select.value===inherited)delete line.scene.expressions[actor.characterId];else line.scene.expressions[actor.characterId]=select.value;
+      if(!Object.keys(line.scene.expressions).length)delete line.scene.expressions;
+      scheduleSave('切换立绘状态',`${line.id}:state:${actor.characterId}`);compile();renderAll()};
+    label.append(select);
+    if(here||auto){const tag=document.createElement('small');tag.textContent=here?' · 本句起':' · 情绪自动';tag.style.color=here?'#c9b8ff':'#9fd3a8';label.append(tag)}
+    host.append(label);
+  }
+  if(!host.children.length){const hint=document.createElement('span');hint.className='muted';hint.textContent='在场角色都只有一种立绘；在「角色」页添加表情（状态）后可以在这里切换。';host.append(hint)}
 }
 function setupWorkbenchResize(){
   const grip=$('#workbenchResize');
@@ -1100,7 +1149,10 @@ function setupWorkbenchLayout(){
   $('#stageQuickCount').append($('#maxOnStageEdit').closest('label'));$('#stageQuickMode').append($('#stageModeEdit').closest('label'));
   $('#stageQuickChoose').onclick=()=>{if($('#stageModeEdit').value!=='custom'){$('#stageModeEdit').value='custom';$('#stageModeEdit').dispatchEvent(new Event('change'))}$('#stageDetails').open=true;setWorkbenchTab('performance');if(uiPrefs.workbenchSize==='collapsed')setWorkbenchSize('expanded');$('#stageDetails').scrollIntoView({block:'nearest',behavior:'smooth'})};
   setupWorkbenchResize();
-  for(const selector of ['.stage-edit-bar','.playback',':scope > .row','.playtest-entry']){const element=stage?.querySelector(selector);if(element)performancePane.append(element)}
+  // Playback sits at the top of the workbench for every tab; composition tools get their own card.
+  const transport=$('#workbenchTransport');
+  for(const selector of ['.playback',':scope > .row','.playtest-entry']){const element=stage?.querySelector(selector);if(element)(transport||performancePane).append(element)}
+  const editBar=stage?.querySelector('.stage-edit-bar'),composition=$('#stageCompositionCard');if(editBar)(composition||performancePane).append(editBar);
   performancePane.append($('#stageDetails'));
   const rightBody=document.querySelector('.panel.right>.body'),inspector=$('#inspectorCard');if(rightBody&&inspector){inspector.classList.add('context-inspector-host');inspector.dataset.contextPane='properties';rightBody.prepend(inspector)}
   document.querySelectorAll('[data-context-tab]').forEach(button=>button.addEventListener('click',()=>setContextTab(button.dataset.contextTab)));setContextTab(uiPrefs.contextTab||'properties');
@@ -1146,7 +1198,7 @@ function setContentView(view,{persist=true,render=true}={}){
   syncCenterContext();
   if(render)renderCurrentView();
 }
-function renderAll(){if(!project)return;selectedIndex=Math.max(0,Math.min(selectedIndex,Math.max(0,project.lines.length-1)));refreshSearch();compile();updateToolbarOptions();renderCurrentView();renderInspector();stageDirectEditor?.render();cameraDirectEditor?.render();sceneViewport?.render();renderStageQuickControls();renderVoiceLineWorkbench();audioWorkbench?.render();updateSelectionUi();updateHistoryUi();void renderPreviewStatic();emitProjectState()}
+function renderAll(){if(!project)return;selectedIndex=Math.max(0,Math.min(selectedIndex,Math.max(0,project.lines.length-1)));refreshSearch();compile();updateToolbarOptions();renderCurrentView();renderInspector();stageDirectEditor?.render();cameraDirectEditor?.render();sceneViewport?.render();renderStageQuickControls();renderAnimationPane();renderVoiceLineWorkbench();audioWorkbench?.render();updateSelectionUi();updateHistoryUi();void renderPreviewStatic();emitProjectState()}
 
 function bindEdit(id,fn,event='change',fullRender=true){$('#'+id).addEventListener(event,()=>{const line=currentLine();if(!line)return;fn(line,$('#'+id).value);scheduleSave('编辑台词',`${line.id}:${id}`);if(fullRender)renderAll()})}
 bindEdit('speakerEdit',(l,v)=>l.speakerId=v);bindEdit('typeEdit',(l,v)=>{l.type=v;if(v==='command'){l.text=l.text.startsWith('/')?l.text:'/wait 0';l.mouth='off';syncCommandLine(l)}else l.command=null;if(v==='dice')l.diceRolls??=[];if(v==='hitpoint')ensureHitPoint(l);if(v==='wheel'){l.wheel??={title:'转盘',mode:'history',steps:[{title:'转盘',options:[{id:'a',label:'A',weight:1},{id:'b',label:'B',weight:1}],resultId:'a',resultLabel:'A'}],blockingAuto:false};l.mouth='off';l.duration??=2.8}if(v==='bubble'){ensureBubble(l);l.mouth='off'}});bindEdit('durationEdit',(l,v)=>l.duration=v===''?null:Number(v));bindEdit('textEdit',(l,v)=>{l.text=v;if(l.type==='command')syncCommandLine(l);if(l.type==='bubble')ensureBubble(l).mainText=v},'input',false);$('#textEdit').addEventListener('change',()=>renderAll());for(const button of document.querySelectorAll('[data-text-tag]'))button.addEventListener('click',()=>{const box=$('#textEdit'),tag=button.dataset.textTag,start=box.selectionStart??box.value.length,end=box.selectionEnd??start;const picked=box.value.slice(start,end)||'文字';box.value=`${box.value.slice(0,start)}{${tag}}${picked}{/${tag}}${box.value.slice(end)}`;box.focus();box.setSelectionRange(start+tag.length+2,start+tag.length+2+picked.length);box.dispatchEvent(new Event('input'));box.dispatchEvent(new Event('change'))});bindEdit('expressionEdit',(l,v)=>{if(v==='__inherit__'){l.expressionMode='inherit';return}l.expressionMode='set';l.expression=v});bindEdit('mouthEdit',(l,v)=>l.mouth=v);bindEdit('sfxEdit',(l,v)=>l.sfxAssetId=v||null);bindEdit('textEffectEdit',(l,v)=>l.textEffect=v);bindEdit('textEffectDurationEdit',(l,v)=>l.textEffectDuration=v===''?null:Number(v));
@@ -1221,6 +1273,35 @@ $('#importAssets').onclick=async()=>{
   scheduleSave('导入素材','asset-import');await saveIfConnected();invalidateMediaCaches();renderAll();
 };
 
+/** RPG Maker style: files dropped straight into assets/sfx, assets/bgm … join the asset list. */
+async function scanAssetFolders({quiet=false}={}){
+  if(!project||!workspace)return 0;const owner=project,ws=workspace;
+  let files=[];try{files=await ws.list('assets')}catch(error){if(!quiet)$('#importStatus').textContent=`读取素材文件夹失败：${error.message||error}`;return 0}
+  const found=discoverFolderAssets(owner,files);
+  for(const asset of found){if(mediaKinds().has(asset.kind)){try{const blob=await ws.read(asset.sourcePath);const duration=await probeDuration(new File([blob],asset.name,{type:asset.mime}));if(duration)asset.metadata.duration=duration}catch{}}}
+  if(project!==owner||workspace!==ws)return 0;
+  if(found.length){owner.assets.push(...found);scheduleSave('发现文件夹里的新素材','asset-scan');await saveIfConnected();invalidateMediaCaches();renderAll()}
+  const byKind=found.reduce((m,a)=>(m[a.kind]=(m[a.kind]||0)+1,m),{});const label={sfx:'音效',bgm:'BGM',ambient:'环境声',character:'立绘',background:'背景',cg:'CG',voice:'语音'};
+  if(found.length||!quiet)$('#importStatus').textContent=found.length?`从素材文件夹发现 ${found.length} 个新素材：${Object.entries(byKind).map(([k,n])=>`${label[k]||k} ${n}`).join('、')}`:'素材文件夹里没有新文件。';
+  return found.length;
+}
+$('#scanAssetFolders').onclick=()=>void scanAssetFolders();
+/** Shared by the batch button and the single-line panel. */
+async function exportForRpgMaker(lines,status){
+  if(!project||!lines.length)return;const say=text=>{if(status)status.textContent=text};
+  try{const result=await exportLinesForRpgMaker({project,lines,resolveAsset:id=>resolveAsset(id),onProgress:say});
+    if(result.cancelled){say('已取消');return}
+    say(result.written.length?`已导出 ${result.written.length} 个文件${result.directory?`到 ${result.directory}`:''}${result.skipped.length?`；跳过：${result.skipped.join('、')}`:''}`:`没有可导出的配音：${result.skipped.join('、')}`)}
+  catch(error){say(`导出失败：${error?.message||error}`)}
+}
+$('#exportRpgMaker').onclick=()=>{const ids=new Set(targetLineIds());void exportForRpgMaker(project.lines.filter(line=>ids.has(line.id)),$('#exportRpgMakerStatus'))};
+const soundPicker=createSoundPicker({getProject:()=>project,resolveAsset:id=>resolveAsset(id),
+  applyLineSound(line,{assetId,gain,pan,offset}){line.sfxAssetId=assetId||null;const mix={...(line.audioMix||{})};if(assetId){if(gain!==undefined)mix.sfxGain=gain;if(pan!==undefined)mix.sfxPan=pan;if(offset)mix.sfxOffset=offset;else delete mix.sfxOffset}else{delete mix.sfxOffset}line.audioMix=mix;scheduleSave('修改音效',`${line.id}:sfx`);compile();renderAll()},
+  insertCommand(text){insertDirectorCommand('raw',text)},
+  startBed(line,kind,id){setPatch(line,kind,id);scheduleSave(kind==='bgm'?'修改 BGM':'修改环境声',`${line.id}:${kind}`);compile();renderAll()},
+  rescan:()=>scanAssetFolders(),
+  importFiles(kind){document.querySelectorAll('#contentTabs [data-view]')[2]?.click();$('#assetKind').value=kind;$('#assetFiles').click()}});
+$('#openSoundPicker').onclick=()=>{const line=currentLine();if(line)soundPicker.open(line,{lineNumber:selectedIndex+1})};
 $('#bulkRelinkAssets').onclick=()=>{if(project)$('#relinkFolderFiles').click()};
 $('#relinkFolderFiles').onchange=async event=>{
   if(!project)return;const files=[...event.target.files];if(!files.length)return;
@@ -1233,7 +1314,7 @@ $('#relinkFolderFiles').onchange=async event=>{
   event.target.value='';
 };
 
-for(const button of document.querySelectorAll('[data-insert-command]'))button.addEventListener('click',()=>insertDirectorCommand(button.dataset.insertCommand));
+for(const button of document.querySelectorAll('[data-insert-command]'))button.addEventListener('click',()=>{const kind=button.dataset.insertCommand,line=currentLine();if(['sfx','bgm','ambient'].includes(kind)&&line){soundPicker.open(line,{lineNumber:selectedIndex+1,kind});return}insertDirectorCommand(kind)});
 $('#prevLine').onclick=()=>{player?.stop();if(!project?.lines.length)return;selectedBeatId=null;selectedIndex=Math.max(0,selectedIndex-1);renderAll();scrollActiveLineIntoView()};$('#nextLine').onclick=()=>{player?.stop();if(!project?.lines.length)return;selectedBeatId=null;selectedIndex=Math.min(project.lines.length-1,selectedIndex+1);renderAll();scrollActiveLineIntoView()};
 $('#addLine').onclick=()=>{if(!project)return;const base=currentLine();const speaker=base?charName(base.speakerId):(project.characters[0]?.name||'角色1');const line=createLine(project,speaker,'新台词','dialogue');project.lines.splice(Math.min(project.lines.length,selectedIndex+1),0,line);selectedIndex=project.lines.indexOf(line);scheduleSave('新增台词','line-add');renderAll()};
 $('#duplicateLine').onclick=()=>{const line=currentLine();if(!line)return;const copy=structuredClone(line);copy.id=makeId('line');copy.audioAssetId=null;delete copy.chapterTitle;delete copy.sceneTitle;project.lines.splice(selectedIndex+1,0,copy);selectedIndex++;scheduleSave('复制台词','line-duplicate');renderAll()};

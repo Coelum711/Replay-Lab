@@ -1,3 +1,4 @@
+import { ACTING_PRESETS } from '../core/acting.js';
 import { createLine, createProject, ensureCharacter } from '../core/project.js';
 import type { ReplayLine, ReplayProject } from '../core/types.js';
 import type { ReplayImporter } from './types.js';
@@ -7,14 +8,6 @@ function splitCast(value: string): string[] {
 }
 
 // Same labels and values as the emotion menu in the voice settings.
-const ACTING_PRESETS: Record<string, string> = {
-  温柔: 'warm and gentle',
-  压着火气: 'restrained anger, low and cold, do not shout',
-  恐惧: 'frightened, breath unsteady, trying to stay quiet',
-  疲惫: 'exhausted, quiet and slightly breathy',
-  愉快: 'amused, with a slight smile',
-  耳语: 'whisper, intimate and close'
-};
 const ACTING_STRENGTHS: Record<string, 'subtle' | 'natural' | 'strong'> = {
   轻: 'subtle', 轻微: 'subtle', 自然: 'natural', 强: 'strong', 明显: 'strong'
 };

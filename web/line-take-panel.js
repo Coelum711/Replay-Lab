@@ -248,7 +248,7 @@ const TONE_GROUPS = [
   ['节奏', [['慢慢说', 'slowly'], ['着急', 'rushed, words tumbling out'], ['结巴', 'stammering'], ['中间停顿', 'with a short pause in the middle']]]
 ];
 
-export function renderLineTakePanel(host, { project, line, workspace, resolveAsset, onChanged, onEdit, clearAudio, bgmOptions, setBgm, importBgm, character }) {
+export function renderLineTakePanel(host, { project, line, workspace, resolveAsset, onChanged, onEdit, clearAudio, bgmOptions, setBgm, importBgm, character, exportRpgMaker }) {
   const active = project.assets.find(asset => asset.id === line.audioAssetId) || null;
   const takes = listVoiceTakes(project, line);
   const element = (tag, props = {}) => Object.assign(document.createElement(tag), props);
@@ -327,6 +327,16 @@ export function renderLineTakePanel(host, { project, line, workspace, resolveAss
   if (active) card.append(row('当前版本', active, true));
   takes.forEach((take, index) => card.append(row(`历史 ${takes.length - index}`, take, false)));
   if (active) card.append(audio);
+  if (active && exportRpgMaker) {
+    const row = element('div', { className: 'row' });
+    const button = element('button', { className: 'small', textContent: '导出当前版本给 RPG Maker（.ogg）', disabled: busy });
+    button.dataset.exportRpgMaker = '1';
+    button.title = '转成 RPG Maker MZ 能播放的 Ogg Vorbis，存进你选的文件夹（一般是游戏的 audio/se），再在事件里用「播放 SE」';
+    const status = element('small', { className: 'muted' });
+    button.onclick = async () => { button.disabled = true; status.textContent = '正在转换…'; await exportRpgMaker(status); button.disabled = false; };
+    row.append(button, status);
+    card.append(row);
+  }
 
   const field = (title, value, placeholder, commit) => {
     const label = element('label', { textContent: title });
