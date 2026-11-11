@@ -8,6 +8,8 @@ function commandLabel(command: ReplayDirectorCommand | null | undefined, line: R
   const media = asset?.name ?? command.target ?? '';
   switch (command.kind) {
     case 'expression': return `${who || '角色'} → ${command.expression ?? 'default'}`;
+    case 'pose': return `${who || '角色'} 姿势 → ${command.value ?? 'default'}`;
+    case 'outfit': return `${who || '角色'} 服装 → ${command.value ?? 'default'}`;
     case 'enter': return `${who || '角色'} 上场${command.position && command.position !== 'auto' ? ` · ${command.position}` : ''}`;
     case 'dismiss': return `${who || '角色'} 退场`;
     case 'move': return `${who || '角色'} 调整位置`;

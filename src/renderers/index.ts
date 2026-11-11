@@ -6,3 +6,4 @@ export * from './browser-media.js';
 
 export * from './easing.js';
 export * from './rplgen-motion.js';
+export * from './body-composite.js';

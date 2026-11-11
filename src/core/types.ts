@@ -1,5 +1,5 @@
 export type LineType = 'dialogue' | 'dice' | 'hitpoint' | 'wheel' | 'bubble' | 'system' | 'narration' | 'command';
-export type DirectorCommandKind = 'dismiss' | 'enter' | 'move' | 'motion' | 'expression' | 'background' | 'cg' | 'object' | 'bgm' | 'ambient' | 'sfx' | 'camera' | 'transition' | 'scene' | 'chapter' | 'wait' | 'flash' | 'shake' | 'emote' | 'filter' | 'card';
+export type DirectorCommandKind = 'dismiss' | 'enter' | 'move' | 'motion' | 'expression' | 'background' | 'cg' | 'object' | 'bgm' | 'ambient' | 'sfx' | 'camera' | 'transition' | 'scene' | 'chapter' | 'wait' | 'flash' | 'shake' | 'emote' | 'filter' | 'card' | 'plugin' | 'pose' | 'outfit';
 export type DirectorBeatTimingMode = 'parallel' | 'sequence';
 export type LineExpressionMode = 'inherit' | 'set';
 export type CharacterKind = 'normal' | 'npc' | 'kp' | 'system';
@@ -11,7 +11,7 @@ export type AutoStageMode = 'vn-continuity' | 'recent';
 export type SpeakerFocusMode = 'none' | 'subtle' | 'strong';
 export type CameraEffect = 'none' | 'push' | 'shake' | 'focus-speaker';
 export type CameraPlacementSource = 'auto' | 'manual' | 'inherited';
-export type TransitionEffect = 'cut' | 'fade' | 'dissolve' | 'wipe-left' | 'wipe-right' | 'wipe-up' | 'wipe-down' | 'iris-in' | 'iris-out' | 'blinds' | 'noise';
+export type TransitionEffect = 'cut' | 'fade' | 'dissolve' | 'wipe-left' | 'wipe-right' | 'wipe-up' | 'wipe-down' | 'iris-in' | 'iris-out' | 'blinds' | 'noise' | (string & {});
 export type BackgroundMethod = 'replace' | 'delay' | 'cross' | 'black' | 'white' | 'push' | 'cover';
 export type AnimationCurve = 'linear' | 'quadratic' | 'quadraticR' | 'sigmoid' | 'right' | 'left' | 'sincurve';
 /** RplGen-compatible text reveal modes: all / word-by-word / line-by-line / run. */
@@ -498,6 +498,24 @@ export interface CharacterLayerSet {
   mouthM?: string | null;
 }
 
+/** How a body layer combines with the layers below it. Non-normal modes only touch pixels already painted (like a clipped Procreate layer); clip is a normal layer clipped that way. */
+export type CharacterBodyBlend = 'normal' | 'multiply' | 'screen' | 'overlay' | 'clip';
+
+export interface CharacterBodyLayer {
+  /** Image asset id or URL. */
+  asset: string;
+  name?: string;
+  blend?: CharacterBodyBlend;
+  opacity?: number;
+  /** Drawn after the face (e.g. a hand resting on the chin). */
+  front?: boolean;
+}
+
+/** Body art for one outfit × pose. Layers are drawn bottom to top and share the base canvas size. */
+export interface CharacterBodyArt {
+  layers: CharacterBodyLayer[];
+}
+
 export interface FaceTemplate {
   id: string;
   name: string;
@@ -693,6 +711,12 @@ export interface ReplayCharacter {
   faceFit: CharacterFaceFit;
   /** Sprite state → words; a line whose emotion tag or tone mentions one uses that sprite for the line. */
   expressionTriggers?: Record<string, string[]>;
+  /** Body art keyed "outfit/pose" (e.g. "外套/抱臂"). When present it replaces the expression's base; expressions then only change the face. */
+  bodies?: Record<string, CharacterBodyArt>;
+  defaultOutfit?: string | null;
+  defaultPose?: string | null;
+  /** Pose → words, like expressionTriggers; picks a pose for that line only. */
+  poseTriggers?: Record<string, string[]>;
   /** Typing blip for this character's unvoiced lines; absent means silent typing. */
   textBlip?: TextBlipVoice | null;
   /** Legacy/default voice fallback. */
@@ -811,6 +835,9 @@ export interface CharacterVisualState {
   facing?: CharacterFacing | null;
   /** Existing/custom motion label currently attached to this beat/line. */
   motion?: string | null;
+  /** Persistent pose / outfit (null = character default). */
+  pose?: string | null;
+  outfit?: string | null;
 }
 
 export interface DirectorBeatChange {
@@ -848,11 +875,14 @@ export interface ScreenEmote {
   duration: number;
 }
 /** Colour grade over the world layer (background, CG and characters), kept until the next /filter. */
-export type ScreenFilterKind = 'memory' | 'night' | 'dusk' | 'mono' | 'dream' | 'vignette' | 'danger';
+export type ScreenFilterKind = 'memory' | 'night' | 'dusk' | 'mono' | 'dream' | 'vignette' | 'danger' | (string & {});
 /** Full-screen eyecatch card shown while a /card command line runs. */
 export interface ChapterCard { title: string; subtitle: string; duration: number; }
 /** Per-character typing blip used for unvoiced lines. */
 export interface TextBlipVoice { pitch: number; wave: 'square' | 'triangle' | 'sine' | 'sawtooth'; }
+
+/** One running plugin command: its name, the words typed after it, and its timing. */
+export interface PluginEffect { name: string; value: string; duration: number; offset: number; }
 
 export interface ScreenShake {
   offset: number;
@@ -865,6 +895,8 @@ export interface ScreenShake {
 
 export interface ReplayDirectorCommand {
   kind: DirectorCommandKind;
+  /** Plugin commands that hold the script for their duration instead of running alongside it. */
+  blocking?: boolean;
   /** Human-readable argument retained even if the referenced object is later renamed or temporarily unresolved. */
   target?: string | null;
   characterId?: string | null;
@@ -923,6 +955,8 @@ export interface ReplayLine {
   expression?: string;
   /** inherit keeps the previous character expression; set applies expression on this line. */
   expressionMode?: LineExpressionMode;
+  /** Speaker's pose from this line on (persistent, like an explicit expression). */
+  pose?: string | null;
   mouth?: 'auto' | 'off' | 'timed';
   mouthCues?: MouthCue[];
   /** Per-line puppet parameter overrides: characterId → parameter id → value (e.g. lookX). Unset parameters follow the expression. */
@@ -1011,6 +1045,9 @@ export interface PerformanceState {
   roster: string[];
   /** Compatibility view of characterVisuals[*].expression. */
   expressions: Record<string, string>;
+  /** Pose / outfit in effect on this line (trigger words applied); missing = character default. */
+  poses?: Record<string, string>;
+  outfits?: Record<string, string>;
   /** Persistent per-character visual state; partial authoring changes never wipe unrelated state. */
   characterVisuals: Record<string, CharacterVisualState>;
   bubble: BubbleEvent | null;
@@ -1072,6 +1109,9 @@ export interface PerformanceLine {
   shakeEvent?: ScreenShake | null;
   emotes?: ScreenEmote[];
   emoteEvent?: ScreenEmote | null;
+  /** Plugin effects overlapping this line; offset is seconds from this line's start. */
+  pluginEffects?: PluginEffect[];
+  pluginEvent?: PluginEffect | null;
   screenFilter?: ScreenFilterKind | null;
   card?: ChapterCard | null;
   /** Kinetic text styling; `text` is already plain. */

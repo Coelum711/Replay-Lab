@@ -97,7 +97,7 @@ test('0.42 director commands are non-dialogue state events for expression, stage
   const perf=compilePerformance(project);
   assert.equal(perf.lines[1].type,'command');
   assert.equal(perf.lines[1].state.expressions[arthur.id],'angry');
-  assert.equal(perf.lines[1].duration,0.04);
+  assert.equal(perf.lines[1].duration,0,'instant commands take no time');
   assert.ok(!perf.lines[2].stage.some(actor=>actor.characterId===arthur.id),'dismiss applies at the command row');
   assert.equal(perf.lines[3].state.bgm,'music');
   assert.equal(perf.lines[4].sfxAssetId,'door');

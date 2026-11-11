@@ -307,7 +307,7 @@ test('/shake parses strength, seconds, rhythm and keeps shaking across later lin
   project.lines.splice(0, 0, command);
   const lines = compilePerformance(project).lines;
   assert.equal(lines[0].duration < 0.1, true, 'shake does not pause the script');
-  assert.equal(lines.filter(line => line.shakes?.length).length, 4, 'command plus the three lines it overlaps');
+  assert.equal(lines.filter(line => line.shakes?.length).length, 3, 'the three lines it overlaps (the 0 s command row itself is never shown)');
   const second = lines[2];
   assert.ok(screenShakeOffset(second.shakes, 0.1, 1280).reach > 0);
   assert.equal(screenShakeOffset(second.shakes, 10, 1280), null, 'stops after its seconds');

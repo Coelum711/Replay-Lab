@@ -12,3 +12,5 @@ export * from './scene-graph.js';
 export * from './projection.js';
 export * from './text-tags.js';
 export * from './acting.js';
+export * from './body.js';
+export * from './body-import.js';

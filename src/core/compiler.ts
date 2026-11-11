@@ -500,6 +500,11 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
         const previous = state.characterVisuals[command.characterId];
         state.characterVisuals[command.characterId] = { ...(previous ?? { position: 'auto' }), expression };
       }
+      if ((command.kind === 'pose' || command.kind === 'outfit') && command.characterId) {
+        const previous = state.characterVisuals[command.characterId];
+        const value = command.value && !['default', 'none', '默认'].includes(command.value) ? command.value : null;
+        state.characterVisuals[command.characterId] = { ...(previous ?? { position: 'auto', expression: state.expressions[command.characterId] ?? 'default' }), [command.kind]: value };
+      }
     }
 
     for (const id of line.scene?.exitIds ?? []) {
@@ -529,6 +534,10 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       state.expressions[line.speakerId] = line.expression;
       const previous = state.characterVisuals[line.speakerId];
       state.characterVisuals[line.speakerId] = { ...(previous ?? { position: 'auto' }), expression: line.expression };
+    }
+    if (line.type !== 'command' && line.pose) {
+      const previous = state.characterVisuals[line.speakerId];
+      state.characterVisuals[line.speakerId] = { ...(previous ?? { position: 'auto', expression: state.expressions[line.speakerId] ?? 'default' }), pose: ['default', '默认'].includes(line.pose) ? null : line.pose };
     }
 
     let roster: string[];
@@ -574,13 +583,15 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     const commandDuration = line.command?.kind === 'wait' ? Math.max(0, Number(line.command.duration) || 0)
       : line.command?.kind === 'flash' ? Math.max(0.01, Number(line.command.duration) || 0.5)
       : line.command?.kind === 'card' ? Math.max(0.01, Number(line.command.duration) || 2.6)
+      : line.command?.kind === 'plugin' && line.command.blocking ? Math.max(0.01, Number(line.command.duration) || 1.5)
       : line.command?.kind === 'motion' ? Math.max(0.01, Number(line.command.duration) || 0.5)
       : line.command?.kind === 'camera' ? Math.max(0.2, line.duration ?? 0.5)
       : line.command?.kind === 'transition' ? Math.max(0.2, line.duration ?? (Number(line.command.duration) || (line.command.value === 'fade' || line.command.value === 'cut' ? 0.42 : 0.7)))
-      : 0.04;
+      // Instant commands (expression, sfx, emote, enter, …) take no time, so the textbox never drops for a frame between lines.
+      : 0;
     const voiceHold = Math.max(0, Number(line.audioMix?.preRoll) || 0) + Math.max(0, Number(line.audioMix?.postRoll) || 0) + Math.max(0, Number(line.audioMix?.voiceOffset) || 0);
     const duration = line.type === 'command'
-      ? (parallelCommand && line.command?.kind !== 'wait' && line.command?.kind !== 'flash' && line.command?.kind !== 'card' ? 0 : Math.max(0, line.duration ?? commandDuration))
+      ? (parallelCommand && line.command?.kind !== 'wait' && line.command?.kind !== 'flash' && line.command?.kind !== 'card' && !(line.command?.kind === 'plugin' && line.command.blocking) ? 0 : Math.max(0, line.duration ?? commandDuration))
       : Math.max(0.2, line.duration ?? (Number.isFinite(voiceDuration) && voiceDuration > 0 ? voiceDuration + voiceHold : estimateDuration(tagged.plain) + pauseExtra));
     const start = cursor;
     const end = start + duration;
@@ -602,6 +613,15 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     // Trigger words pick a sprite for this line only; an explicit expression on the line wins.
     const moodExpression = line.type === 'dialogue' && line.expressionMode !== 'set' && !line.scene?.expressions?.[line.speakerId]
       ? triggeredExpression(chars.get(line.speakerId)?.expressionTriggers, lineMoodText(line)) : null;
+    // Pose trigger words work the same way; an explicit pose on the line wins.
+    const moodPose = line.type === 'dialogue' && !line.pose
+      ? triggeredExpression(chars.get(line.speakerId)?.poseTriggers, lineMoodText(line)) : null;
+    const poses: Record<string, string> = {}, outfits: Record<string, string> = {};
+    for (const [id, visual] of Object.entries(state.characterVisuals)) {
+      if (visual.pose) poses[id] = visual.pose;
+      if (visual.outfit) outfits[id] = visual.outfit;
+    }
+    if (moodPose) poses[line.speakerId] = moodPose;
     const performanceState: PerformanceState = {
       background: state.background,
       cg: state.cg,
@@ -611,6 +631,8 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       ambient: state.ambient,
       roster: [...roster],
       expressions: { ...state.expressions, ...(moodExpression ? { [line.speakerId]: moodExpression } : {}) },
+      ...(Object.keys(poses).length ? { poses } : {}),
+      ...(Object.keys(outfits).length ? { outfits } : {}),
       characterVisuals: Object.fromEntries(Object.entries(state.characterVisuals).map(([id, visual]) => [id, { ...visual, ...(visual.transform ? { transform: { ...visual.transform } } : {}) }])),
       bubble: line.bubble ? { ...line.bubble, metadata: line.bubble.metadata ? { ...line.bubble.metadata } : undefined } : state.bubble ? { ...state.bubble } : null
     };
@@ -636,6 +658,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       ...(blip ? { textBlip: { ...blip } } : {}),
       screenFilter: currentFilter,
       ...(line.type === 'command' && line.command?.kind === 'emote' && line.command.characterId ? { emoteEvent: emoteFromCommand(line.command) } : {}),
+      ...(line.type === 'command' && line.command?.kind === 'plugin' && line.command.target ? { pluginEvent: { name: line.command.target, value: line.command.value ?? '', duration: Math.max(0.01, Number(line.command.duration) || 1.5), offset: 0 } } : {}),
       ...(line.type === 'command' && line.command?.kind === 'card' ? { card: { title: line.command.value ?? '', subtitle: line.command.target ?? '', duration } } : {}),
       speechText: speech.text,
       speechLanguage: speech.language,
@@ -676,6 +699,17 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     });
     cursor = end + (index === project.lines.length - 1 ? 0 : line.type === 'command' ? 0 : 0.18);
   });
+
+  // Plugin effects run on across the following lines too.
+  for (const source of lines) {
+    const effect = source.pluginEvent;
+    if (!effect) continue;
+    const from = source.start, until = source.start + effect.duration;
+    for (const target of lines) {
+      if (target.end <= from || target.start >= until) continue;
+      (target.pluginEffects ??= []).push({ ...effect, offset: from - target.start });
+    }
+  }
 
   // An emote stays up across the following lines like a shake does.
   for (const source of lines) {
@@ -721,6 +755,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       expressions: Object.fromEntries(Object.entries(c.expressions ?? {}).map(([name, set]) => [name, { ...set }])),
       layers: { ...(c.layers ?? {}) },
       layerExpressions: Object.fromEntries(Object.entries(c.layerExpressions ?? {}).map(([name, set]) => [name, { ...set }])),
+      ...(c.bodies ? { bodies: Object.fromEntries(Object.entries(c.bodies).map(([key, art]) => [key, { layers: (art?.layers ?? []).map(layer => ({ ...layer })) }])) } : {}),
       puppet: normalizePuppetRig(c.puppet),
       faceFit: normalizeFaceFit(c.faceFit)
     })),

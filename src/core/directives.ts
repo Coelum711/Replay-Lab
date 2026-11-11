@@ -1,3 +1,4 @@
+import { pluginCommand, pluginFilter, pluginTransition } from '../plugins/stage-plugins.js';
 import type { DirectorCommandKind, ReplayDirectorCommand, ReplayLine, ReplayProject, StagePosition } from './types.js';
 import { resolveCharacterName } from './character-name.js';
 
@@ -63,7 +64,8 @@ function commandName(raw: string): DirectorCommandKind | null {
     bg: 'background', background: 'background',
     cg: 'cg', object: 'object', obj: 'object', prop: 'object', bgm: 'bgm', music: 'bgm', ambient: 'ambient', ambience: 'ambient', amb: 'ambient', sfx: 'sfx', se: 'sfx', sound: 'sfx',
     camera: 'camera', cam: 'camera', transition: 'transition', trans: 'transition',
-    scene: 'scene', chapter: 'chapter', wait: 'wait', pause: 'wait', flash: 'flash', shake: 'shake', quake: 'shake', emote: 'emote', mark: 'emote', filter: 'filter', grade: 'filter', card: 'card', eyecatch: 'card'
+    scene: 'scene', chapter: 'chapter', wait: 'wait', pause: 'wait', flash: 'flash', shake: 'shake', quake: 'shake', emote: 'emote', mark: 'emote', filter: 'filter', grade: 'filter', card: 'card', eyecatch: 'card',
+    pose: 'pose', 姿势: 'pose', outfit: 'outfit', costume: 'outfit', 服装: 'outfit'
   };
   return aliases[key] ?? null;
 }
@@ -85,8 +87,25 @@ export function parseDirectorCommand(project: ReplayProject, text: string): Dire
   const tokens = tokenize(text);
   if (!tokens.length || !tokens[0]!.startsWith('/')) return { command: null, error: '指令必须以 / 开头。' };
   const kind = commandName(tokens[0]!);
-  if (!kind) return { command: null, error: `未知指令：${tokens[0]}` };
+  if (!kind) {
+    const plugin = pluginCommand(tokens[0]!.replace(/^\//, ''));
+    if (!plugin) return { command: null, error: `未知指令：${tokens[0]}（如果它来自工程插件，请先在「插件」里启用）` };
+    const words = tokens.slice(1);
+    let parsed: ReturnType<NonNullable<typeof plugin.def.parse>> | undefined;
+    try { parsed = plugin.def.parse?.(words); } catch (error) { return { command: null, error: `/${plugin.name} 解析出错：${(error as Error)?.message || error}` }; }
+    if (parsed && 'error' in parsed) return { command: null, error: `${parsed.error}${plugin.def.usage ? `（写法：${plugin.def.usage}）` : ''}` };
+    const duration = Math.max(0.01, Math.min(120, Number(parsed?.duration ?? plugin.def.defaultDuration ?? 1.5) || 1.5));
+    return { command: { kind: 'plugin', target: plugin.name, value: words.map(quoteArg).join(' '), duration, ...(parsed?.blocking ? { blocking: true } : {}) } };
+  }
   const args = tokens.slice(1);
+  if (kind === 'pose' || kind === 'outfit') {
+    if (!args[0]) return { command: null, error: `/${kind} 需要角色名字。` };
+    const c = character(project, args[0]);
+    if (!c) return { command: null, error: `找不到角色：${args[0]}` };
+    const value = args.slice(1).join(' ').trim();
+    if (!value) return { command: null, error: kind === 'pose' ? '/pose 需要姿势名字，例如 /pose 亚瑟 抱臂（default 回到默认）。' : '/outfit 需要服装名字，例如 /outfit 亚瑟 衬衫（default 回到默认）。' };
+    return { command: { kind, target: args[0], characterId: c.id, value } };
+  }
   if (kind === 'dismiss' || kind === 'enter' || kind === 'move' || kind === 'motion' || kind === 'expression') {
     if (!args[0]) return { command: null, error: `/${kind} 需要角色名字。` };
     const c = character(project, args[0]);
@@ -161,8 +180,8 @@ export function parseDirectorCommand(project: ReplayProject, text: string): Dire
     return { command: { kind, value } };
   }
   if (kind === 'transition') {
-    const value = TRANSITION_ALIASES[(args[0] ?? '').toLowerCase()] ?? TRANSITION_ALIASES[args[0] ?? ''] ?? '';
-    if (!TRANSITION_VALUES.has(value)) return { command: null, error: '/transition 可用：切 淡入 溶解 左擦 右擦 上擦 下擦 圆开 圆收 百叶窗 碎点（或英文 cut fade dissolve wipe-left …），可再写秒数。' };
+    const value = TRANSITION_ALIASES[(args[0] ?? '').toLowerCase()] ?? TRANSITION_ALIASES[args[0] ?? ''] ?? pluginTransition(args[0])?.name ?? '';
+    if (!TRANSITION_VALUES.has(value) && !pluginTransition(value)) return { command: null, error: '/transition 可用：切 淡入 溶解 左擦 右擦 上擦 下擦 圆开 圆收 百叶窗 碎点（或英文 cut fade dissolve wipe-left …），可再写秒数。' };
     const seconds = args[1] === undefined ? null : Number(args[1]);
     if (seconds !== null && (!(seconds > 0) || seconds > 10)) return { command: null, error: '/transition 秒数需要在 0 到 10 之间。' };
     return { command: { kind, value, ...(seconds !== null ? { duration: seconds } : {}) } };
@@ -200,7 +219,7 @@ export function parseDirectorCommand(project: ReplayProject, text: string): Dire
     return { command: { kind, target: who, characterId: c.id, value, duration: seconds } };
   }
   if (kind === 'filter') {
-    const value = FILTER_ALIASES[args[0] ?? ''] ?? FILTER_ALIASES[(args[0] ?? '').toLowerCase()];
+    const value = FILTER_ALIASES[args[0] ?? ''] ?? FILTER_ALIASES[(args[0] ?? '').toLowerCase()] ?? pluginFilter(args[0])?.name;
     if (!value) return { command: null, error: '/filter 可用：回忆 夜晚 黄昏 黑白 梦境 暗角 危险 无。效果一直持续到下一条 /filter。' };
     return { command: { kind, value } };
   }
@@ -240,6 +259,8 @@ export function formatDirectorCommand(project: ReplayProject, command: ReplayDir
     case 'move': return `/move ${quoteArg(charName ?? command.target ?? '')}${command.position && command.position !== 'auto' ? ` ${command.position}` : ''}`.trim();
     case 'motion': return `/motion ${quoteArg(charName ?? command.target ?? '')} ${quoteArg(command.value ?? 'replace')} ${Math.max(0, Number(command.duration) || 0.5)}`.trim();
     case 'expression': return `/expression ${quoteArg(charName ?? command.target ?? '')} ${quoteArg(command.expression ?? 'default')}`.trim();
+    case 'pose': return `/pose ${quoteArg(charName ?? command.target ?? '')} ${quoteArg(command.value ?? 'default')}`.trim();
+    case 'outfit': return `/outfit ${quoteArg(charName ?? command.target ?? '')} ${quoteArg(command.value ?? 'default')}`.trim();
     case 'background': return `/bg ${quoteArg(assetName ?? command.target ?? 'none')}`;
     case 'cg': return `/cg ${quoteArg(assetName ?? command.target ?? 'none')}`;
     case 'object': {
@@ -268,6 +289,7 @@ export function formatDirectorCommand(project: ReplayProject, command: ReplayDir
     case 'shake': { const [pattern = 'random', amplitude = '12', frequency = '14'] = String(command.value ?? '').split(' '); return `/shake ${amplitude} ${Math.max(0.01, Number(command.duration) || 1)} ${pattern === 'fixed' ? '固定' : '随机'} ${frequency}`; }
     case 'emote': return `/emote ${quoteArg(charName ?? command.target ?? '')} ${Object.keys(EMOTE_ALIASES).find(key => EMOTE_ALIASES[key] === command.value) ?? command.value} ${Math.max(0.01, Number(command.duration) || 1.6)}`;
     case 'filter': return `/filter ${Object.keys(FILTER_ALIASES).find(key => FILTER_ALIASES[key] === command.value) ?? command.value}`;
+    case 'plugin': return `/${command.target ?? ''}${command.value ? ` ${command.value}` : ''}`;
     case 'card': return `/card ${quoteArg(command.value ?? '')}${command.target ? ` ${quoteArg(command.target)}` : ''} ${Math.max(0.01, Number(command.duration) || 2.6)}`;
     case 'flash': return `/flash ${command.value ?? '#000000'} ${Math.max(0.01, Number(command.duration) || 0.5)}`;
   }
