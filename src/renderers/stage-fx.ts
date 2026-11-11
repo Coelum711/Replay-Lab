@@ -1,3 +1,4 @@
+import { decodeFilterValue, filterCss } from '../core/filters.js';
 /**
  * Classic VN/ADV staging effects drawn with plain canvas calls: manga marks, kinetic text,
  * rule-style transitions, colour grades and eyecatch cards. Everything is a pure function of
@@ -206,33 +207,30 @@ export const MASK_TRANSITION_SECONDS = 0.7;
 // ---------------------------------------------------------------- colour grades
 
 export function screenFilterCss(kind: ScreenFilterKind | null | undefined): string {
-  switch (kind) {
-    case 'memory': return 'sepia(0.75) saturate(0.8) brightness(1.04) contrast(0.92)';
-    case 'night': return 'brightness(0.62) saturate(0.7) hue-rotate(-12deg) contrast(1.05)';
-    case 'dusk': return 'sepia(0.3) saturate(1.25) brightness(0.92) hue-rotate(-12deg)';
-    case 'mono': return 'grayscale(1) contrast(1.08)';
-    case 'dream': return 'saturate(1.25) brightness(1.08) blur(1.2px)';
-    case 'danger': return 'saturate(1.15) contrast(1.1)';
-    default: return '';
-  }
+  const decoded = decodeFilterValue(kind);
+  return decoded ? filterCss(decoded.params) : '';
 }
 
-/** Overlay painted after the graded world (tint washes, vignettes, pulsing red). */
+const rgb = (hex: string) => { const n = parseInt(hex.slice(1), 16); return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`; };
+
+/** Overlay painted after the graded world: the colour wash, then the (optionally pulsing) vignette. */
 export function drawScreenFilterOverlay(ctx: CanvasRenderingContext2D, kind: ScreenFilterKind | null | undefined, width: number, height: number, time: number): void {
-  if (!kind) return;
-  const vignette = (strength: number, color = '0,0,0') => {
-    const g = ctx.createRadialGradient(width / 2, height / 2, Math.min(width, height) * 0.32, width / 2, height / 2, Math.hypot(width, height) / 2);
-    g.addColorStop(0, `rgba(${color},0)`); g.addColorStop(1, `rgba(${color},${strength})`);
-    ctx.fillStyle = g; ctx.fillRect(0, 0, width, height);
-  };
+  const decoded = decodeFilterValue(kind);
+  if (!decoded) return;
+  const p = decoded.params;
   ctx.save();
-  if (kind === 'memory') { vignette(0.55, '40,24,8'); ctx.fillStyle = 'rgba(255,236,200,.08)'; ctx.fillRect(0, 0, width, height); }
-  else if (kind === 'night') { ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = 'rgba(70,90,170,.55)'; ctx.fillRect(0, 0, width, height); ctx.globalCompositeOperation = 'source-over'; vignette(0.35); }
-  else if (kind === 'dusk') { ctx.globalCompositeOperation = 'soft-light'; ctx.fillStyle = 'rgba(255,140,60,.45)'; ctx.fillRect(0, 0, width, height); ctx.globalCompositeOperation = 'source-over'; vignette(0.25, '60,20,30'); }
-  else if (kind === 'mono') vignette(0.3);
-  else if (kind === 'dream') { ctx.fillStyle = 'rgba(255,230,250,.12)'; ctx.fillRect(0, 0, width, height); vignette(0.45, '255,240,255'); }
-  else if (kind === 'vignette') vignette(0.72);
-  else if (kind === 'danger') vignette(0.35 + 0.25 * (0.5 + 0.5 * Math.sin(time * 5)), '170,0,20');
+  if (p.tintAmount > 0) {
+    ctx.globalCompositeOperation = p.blend === 'normal' ? 'source-over' : p.blend;
+    ctx.fillStyle = `rgba(${rgb(p.tint)},${p.tintAmount})`;
+    ctx.fillRect(0, 0, width, height);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  const strength = Math.min(1, p.vignette + (p.pulse ? p.pulse * (0.5 + 0.5 * Math.sin(time * 5)) : 0));
+  if (strength > 0) {
+    const g = ctx.createRadialGradient(width / 2, height / 2, Math.min(width, height) * 0.32, width / 2, height / 2, Math.hypot(width, height) / 2);
+    g.addColorStop(0, `rgba(${rgb(p.vignetteColor)},0)`); g.addColorStop(1, `rgba(${rgb(p.vignetteColor)},${strength})`);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, width, height);
+  }
   ctx.restore();
 }
 
