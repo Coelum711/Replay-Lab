@@ -16,5 +16,5 @@ export function createExportSession({project,performance,workspace,files,width,h
   };
   const canvas=createCanvas();canvas.width=width;canvas.height=height;
   const renderer=createRenderer({canvas,performance:snapshot,resolveAsset});
-  return {player:createPlayer(snapshot,renderer,resolveAsset),performance:snapshot,workspace,title:project.title};
+  return {player:createPlayer(snapshot,renderer,resolveAsset),renderer,resolveAsset,performance:snapshot,workspace,title:project.title};
 }

@@ -3,6 +3,7 @@ import { createSoundPicker } from './sound-picker.js';
 import { renderAnimationWorkbench } from './animation-workbench.js';
 import { exportLinesForRpgMaker } from './rpgmaker-export.js';
 import { loadProjectPlugins, forgetPluginApprovals, STARTER_PLUGIN } from './plugin-loader.js';
+import { exportForEditors } from './edit-export.js';
 import { SceneViewportController } from './scene-viewport-controller.js';
 import { CameraDirectEditorController } from './camera-editor-controller.js';
 import { CharacterIdentityController } from './character-identity-controller.js';
@@ -1559,6 +1560,18 @@ let exportBusy=false;
 function captureExport(){return createExportSession({project,performance:performanceDoc,workspace,files:runtimeFiles,width:$('#stageCanvas').width,height:$('#stageCanvas').height});}
 $('#exportQuality').onchange=updateExportEstimate;
 $('#cancelExport').onclick=()=>activeExportController?.abort();
+$('#exportEditBundle').onclick=async()=>{
+  if(exportBusy||!player||!performanceDoc?.lines.length)return;
+  if(!workspace){$('#renderStatus').textContent='请先连接工程文件夹：剪辑素材包会写进工程的 exports 文件夹。';return}
+  const session=captureExport();exportBusy=true;activeExportController=new AbortController();
+  $('#exportMp4').disabled=true;$('#exportWebm').disabled=true;$('#exportEditBundle').disabled=true;$('#cancelExport').hidden=false;$('#renderProgress').style.width='0%';
+  try{
+    const result=await exportForEditors({session,workspace,preset:selectedExportPreset(),moduleSpecifier:MEDIABUNNY_BROWSER_MODULE,signal:activeExportController.signal,onProgress:(text,progress)=>{$('#renderStatus').textContent=text;$('#renderProgress').style.width=`${(progress*100).toFixed(1)}%`}});
+    await refreshWorkspace();$('#renderProgress').style.width='100%';
+    $('#renderStatus').textContent=`完成 · ${result.dir} · ${result.overlays} 张对话框 · ${result.audio} 段音频${result.missing.length?` · ${result.missing.length} 段读取失败（见 说明.txt）`:''}${result.absolute?'':' · 时间轴用的是相对路径'}`;
+  }catch(error){$('#renderStatus').textContent=error?.name==='AbortError'?'导出已取消（已写出的文件留在 exports 里）。':`剪辑素材包导出失败：${error.message||error}`;if(error?.name!=='AbortError')console.error(error)}
+  finally{await session.player.dispose();exportBusy=false;activeExportController=null;$('#cancelExport').hidden=true;$('#exportMp4').disabled=false;$('#exportWebm').disabled=false;$('#exportEditBundle').disabled=false}
+};
 $('#exportMp4').onclick=async()=>{
   if(exportBusy||!player||!performanceDoc?.lines.length)return;
   const session=captureExport();exportBusy=true;let target,exportCompleted=false;

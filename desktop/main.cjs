@@ -94,6 +94,7 @@ async function start(){
         preferences.recent=[{id:previous?.id||randomUUID(),label:grant.label,path:grant.path,updatedAt:Date.now()},...preferences.recent.filter(r=>r.path!==grant.path)].slice(0,8);
         await savePreferences();return grant;
       }
+      case 'root':return files.root(id);
       case 'read':return files.read(id,relative);
       case 'exists':return files.exists(id,relative);
       case 'list':return files.list(id,relative);
