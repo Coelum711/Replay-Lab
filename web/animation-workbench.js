@@ -1,3 +1,4 @@
+import { FILTER_PRESETS, decodeFilterValue, filterOverrideWords } from '../dist/index.js';
 /**
  * 施工台 → 动画: everything that stages the current line in one place. Lists the director
  * commands just before it (editable), effects still running from earlier lines, and buttons
@@ -7,8 +8,8 @@ const KIND_LABEL = { shake: '震动', flash: '闪屏', emote: '漫符', transiti
 const EMOTES = ['怒', '汗', '惊', '问', '惊问', '省略', '心', '音符', '闪', '黑线', '冒气', '灵光'];
 const EMOTE_VALUE = { 怒: 'anger', 汗: 'sweat', 惊: 'surprise', 问: 'question', 惊问: 'surprise-question', 省略: 'dots', 心: 'heart', 音符: 'note', 闪: 'sparkle', 黑线: 'gloom', 冒气: 'steam', 灵光: 'idea' };
 const TRANSITIONS = [['dissolve', '溶解'], ['fade', '黑场淡入'], ['wipe-left', '向左擦除'], ['wipe-right', '向右擦除'], ['wipe-up', '向上擦除'], ['wipe-down', '向下擦除'], ['iris-in', '圆形展开'], ['iris-out', '圆形收缩'], ['blinds', '百叶窗'], ['noise', '碎点溶解'], ['cut', '直接切换']];
-const FILTERS = [['回忆', '回忆（泛黄）'], ['夜晚', '夜晚'], ['黄昏', '黄昏'], ['黑白', '黑白'], ['梦境', '梦境'], ['暗角', '暗角'], ['危险', '危险（红色脉动）'], ['无', '关闭滤镜']];
-const FILTER_VALUE = { 回忆: 'memory', 夜晚: 'night', 黄昏: 'dusk', 黑白: 'mono', 梦境: 'dream', 暗角: 'vignette', 危险: 'danger', 无: 'none' };
+const FILTERS = [['自定义', '自定义'], ['回忆', '回忆（泛黄）'], ['夜晚', '夜晚'], ['黄昏', '黄昏'], ['黑白', '黑白'], ['梦境', '梦境'], ['暗角', '暗角'], ['危险', '危险（红色脉动）'], ['无', '关闭滤镜']];
+const FILTER_VALUE = { 自定义: 'custom', 回忆: 'memory', 夜晚: 'night', 黄昏: 'dusk', 黑白: 'mono', 梦境: 'dream', 暗角: 'vignette', 危险: 'danger', 无: 'none' };
 const quote = value => /\s/.test(String(value)) ? `"${String(value).replace(/"/g, '\\"')}"` : String(value);
 
 export function renderAnimationWorkbench(host, ctx) {
@@ -55,7 +56,7 @@ export function renderAnimationWorkbench(host, ctx) {
   const lineStart = perf?.start ?? 0;
   for (const shake of perf?.shakes ?? []) if (shake.offset < -0.05) carried.push([`震动（之前开始，还剩 ${Math.max(0, shake.duration + shake.offset).toFixed(1)} 秒）`, lineStart + shake.offset]);
   for (const emote of perf?.emotes ?? []) if (emote.offset < -0.05) carried.push([`漫符 · ${characterName(emote.characterId)}（之前开始）`, lineStart + emote.offset]);
-  if (perf?.screenFilter) carried.push([`滤镜：${Object.keys(FILTER_VALUE).find(k => FILTER_VALUE[k] === perf.screenFilter) ?? perf.screenFilter}（一直持续到 /filter 无）`, null, 'filter']);
+  if (perf?.screenFilter) { const preset = decodeFilterValue(perf.screenFilter)?.preset ?? perf.screenFilter; const word = Object.keys(FILTER_VALUE).find(k => FILTER_VALUE[k] === preset) ?? (preset === 'custom' ? '自定义' : preset); carried.push([`滤镜：${word}${String(perf.screenFilter).startsWith('custom:') ? '（已微调）' : ''}（一直持续到 /filter 无）`, null, 'filter']); }
   if (carried.length) {
     host.append(el('strong', { textContent: '从前面延续过来的效果' }));
     for (const [text, at, kind] of carried) {
@@ -110,8 +111,7 @@ export function renderAnimationWorkbench(host, ctx) {
       fields.append(pick('方式', TRANSITIONS, value, v => set(`/transition ${v}${seconds ? ` ${seconds}` : ''}`), 'animTransition'),
         num('秒数', seconds || 0.7, 0.1, v => set(`/transition ${value} ${v}`)));
     } else if (kind === 'filter') {
-      const word = Object.keys(FILTER_VALUE).find(k => FILTER_VALUE[k] === command.value) ?? '无';
-      fields.append(pick('滤镜', FILTERS, word, v => set(`/filter ${v}`), 'animFilter'));
+      fields.append(filterEditor(command, set, el));
     } else if (kind === 'card') {
       const title = el('input', { value: command.value ?? '' }), subtitle = el('input', { value: command.target ?? '', placeholder: '副标题' });
       const seconds = Number(command.duration) || 2.6;
@@ -139,4 +139,52 @@ function lineAtTime(performance, project, time) {
   if (!performance || time == null) return -1;
   const hit = performance.lines.findIndex(item => item.type === 'command' && Math.abs(item.start - time) < 0.02);
   return hit;
+}
+
+const FILTER_SLIDERS = [['brightness', '亮度', 0, 2, 0.05], ['contrast', '对比', 0, 2, 0.05], ['saturate', '饱和', 0, 2, 0.05], ['sepia', '泛黄', 0, 1, 0.05],
+  ['grayscale', '黑白', 0, 1, 0.05], ['hue', '色相', -180, 180, 5], ['blur', '模糊', 0, 6, 0.2], ['vignette', '暗角', 0, 1, 0.05], ['pulse', '闪烁', 0, 1, 0.05]];
+const BLEND_OPTIONS = [['normal', '正常'], ['multiply', '正片叠底'], ['soft-light', '柔光'], ['screen', '滤色'], ['overlay', '叠加']];
+
+/** Preset dropdown plus colour pickers and sliders; every change rewrites the /filter line. */
+function filterEditor(command, set, el) {
+  const decoded = decodeFilterValue(command.value);
+  const box = el('div', { className: 'stack' }); box.style.cssText = 'gap:6px;width:100%';
+  const presetValue = decoded?.preset ?? (command.value === 'none' ? 'none' : 'custom');
+  const word = Object.keys(FILTER_VALUE).find(k => FILTER_VALUE[k] === presetValue) ?? '自定义';
+  const params = { ...(decoded?.params ?? FILTER_PRESETS.custom) };
+  const write = (nextWord, next) => {
+    const value = FILTER_VALUE[nextWord];
+    if (value === 'none') { set('/filter 无'); return; }
+    set([`/filter ${nextWord}`, ...filterOverrideWords(FILTER_PRESETS[value], next)].join(' '));
+  };
+  const top = el('div', { className: 'row' });
+  const preset = el('select'); preset.dataset.animFilter = '1';
+  for (const [v, t] of FILTERS) preset.append(el('option', { value: v, textContent: t }));
+  preset.value = word;
+  // Switching preset starts from that preset's own values.
+  preset.onchange = () => write(preset.value, { ...(FILTER_PRESETS[FILTER_VALUE[preset.value]] ?? FILTER_PRESETS.custom) });
+  const reset = el('button', { className: 'small', textContent: '恢复预设' }); reset.onclick = () => write(word, { ...FILTER_PRESETS[FILTER_VALUE[word]] });
+  top.append(el('label', { className: 'muted', textContent: '滤镜 ' }, preset), reset);
+  box.append(top);
+  if (presetValue === 'none') return box;
+  const commit = patch => write(word, { ...params, ...patch });
+  const colors = el('div', { className: 'row' }); colors.style.flexWrap = 'wrap';
+  const tint = el('input', { type: 'color', value: params.tint }); tint.dataset.animFilterTint = '1'; tint.onchange = () => commit({ tint: tint.value, tintAmount: params.tintAmount || 0.3 });
+  const amount = el('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(params.tintAmount) }); amount.dataset.animFilterAmount = '1';
+  const amountLabel = el('span', { textContent: params.tintAmount.toFixed(2) });
+  amount.oninput = () => { amountLabel.textContent = Number(amount.value).toFixed(2); }; amount.onchange = () => commit({ tintAmount: Number(amount.value) });
+  const blend = el('select'); for (const [v, t] of BLEND_OPTIONS) blend.append(el('option', { value: v, textContent: t })); blend.value = params.blend; blend.onchange = () => commit({ blend: blend.value });
+  const vigColor = el('input', { type: 'color', value: params.vignetteColor }); vigColor.onchange = () => commit({ vignetteColor: vigColor.value });
+  colors.append(el('label', { className: 'muted', textContent: '色调 ' }, tint), el('label', { className: 'muted', textContent: '强度 ' }, amount, amountLabel), el('label', { className: 'muted', textContent: '混合 ' }, blend), el('label', { className: 'muted', textContent: '暗角颜色 ' }, vigColor));
+  box.append(colors);
+  const sliders = el('div', { className: 'row' }); sliders.style.flexWrap = 'wrap';
+  for (const [key, label, min, max, step] of FILTER_SLIDERS) {
+    const input = el('input', { type: 'range', min: String(min), max: String(max), step: String(step), value: String(params[key]) }); input.dataset.animFilterSlider = key; input.style.width = '90px';
+    const shown = el('span', { textContent: String(Math.round(params[key] * 100) / 100) });
+    input.oninput = () => { shown.textContent = String(Math.round(Number(input.value) * 100) / 100); };
+    input.onchange = () => commit({ [key]: Number(input.value) });
+    sliders.append(el('label', { className: 'muted', textContent: `${label} ` }, input, shown));
+  }
+  box.append(sliders);
+  return box;
 }

@@ -1,3 +1,4 @@
+import { FILTER_PRESETS, NEUTRAL_FILTER, decodeFilterValue, encodeFilterValue, filterOverrideWords, parseFilterWords } from './filters.js';
 import { pluginCommand, pluginFilter, pluginTransition } from '../plugins/stage-plugins.js';
 import type { DirectorCommandKind, ReplayDirectorCommand, ReplayLine, ReplayProject, StagePosition } from './types.js';
 import { resolveCharacterName } from './character-name.js';
@@ -23,7 +24,7 @@ export const EMOTE_ALIASES: Record<string, string> = {
 };
 export const FILTER_ALIASES: Record<string, string> = {
   回忆: 'memory', memory: 'memory', 夜晚: 'night', 夜: 'night', night: 'night', 黄昏: 'dusk', dusk: 'dusk', 黑白: 'mono', mono: 'mono',
-  梦境: 'dream', 梦: 'dream', dream: 'dream', 暗角: 'vignette', vignette: 'vignette', 危险: 'danger', 警报: 'danger', danger: 'danger', 无: 'none', none: 'none', off: 'none', 关: 'none'
+  梦境: 'dream', 梦: 'dream', dream: 'dream', 自定义: 'custom', custom: 'custom', 暗角: 'vignette', vignette: 'vignette', 危险: 'danger', 警报: 'danger', danger: 'danger', 无: 'none', none: 'none', off: 'none', 关: 'none'
 };
 const SHAKE_STRENGTHS: Record<string, number> = { 轻: 5, 中: 12, 强: 24, light: 5, medium: 12, strong: 24 };
 const SHAKE_PATTERNS: Record<string, 'fixed' | 'random'> = { 固定: 'fixed', 规律: 'fixed', fixed: 'fixed', 随机: 'random', random: 'random' };
@@ -219,9 +220,20 @@ export function parseDirectorCommand(project: ReplayProject, text: string): Dire
     return { command: { kind, target: who, characterId: c.id, value, duration: seconds } };
   }
   if (kind === 'filter') {
-    const value = FILTER_ALIASES[args[0] ?? ''] ?? FILTER_ALIASES[(args[0] ?? '').toLowerCase()] ?? pluginFilter(args[0])?.name;
-    if (!value) return { command: null, error: '/filter 可用：回忆 夜晚 黄昏 黑白 梦境 暗角 危险 无。效果一直持续到下一条 /filter。' };
-    return { command: { kind, value } };
+    const first = args[0] ?? '';
+    const named = FILTER_ALIASES[first] ?? FILTER_ALIASES[first.toLowerCase()];
+    if (!named) {
+      const plugin = pluginFilter(first)?.name;
+      if (plugin) return { command: { kind, value: plugin } };
+    }
+    // `/filter 色#ff8800 …` without a preset name means a custom grade.
+    const preset = named ?? (first && parseFilterWords(NEUTRAL_FILTER, [first]) && !('error' in parseFilterWords(NEUTRAL_FILTER, [first])) ? 'custom' : null);
+    if (!preset) return { command: null, error: '/filter 可用：回忆 夜晚 黄昏 黑白 梦境 暗角 危险 自定义 无，后面可以接微调，例如 /filter 回忆 暗0.7 或 /filter 自定义 色#ff8800 强0.35。效果一直持续到下一条 /filter。' };
+    if (preset === 'none') return { command: { kind, value: 'none' } };
+    const words = named ? args.slice(1) : args;
+    const parsed = parseFilterWords(FILTER_PRESETS[preset]!, words);
+    if ('error' in parsed) return { command: null, error: `/filter ${parsed.error}` };
+    return { command: { kind, value: encodeFilterValue(preset, parsed.params) } };
   }
   if (kind === 'card') {
     const numbers = args.filter(arg => /^\d+(?:\.\d+)?$/.test(arg));
@@ -288,7 +300,12 @@ export function formatDirectorCommand(project: ReplayProject, command: ReplayDir
     case 'wait': return `/wait ${Math.max(0, Number(command.duration) || 0)}`;
     case 'shake': { const [pattern = 'random', amplitude = '12', frequency = '14'] = String(command.value ?? '').split(' '); return `/shake ${amplitude} ${Math.max(0.01, Number(command.duration) || 1)} ${pattern === 'fixed' ? '固定' : '随机'} ${frequency}`; }
     case 'emote': return `/emote ${quoteArg(charName ?? command.target ?? '')} ${Object.keys(EMOTE_ALIASES).find(key => EMOTE_ALIASES[key] === command.value) ?? command.value} ${Math.max(0.01, Number(command.duration) || 1.6)}`;
-    case 'filter': return `/filter ${Object.keys(FILTER_ALIASES).find(key => FILTER_ALIASES[key] === command.value) ?? command.value}`;
+    case 'filter': {
+      const decoded = decodeFilterValue(command.value);
+      if (!decoded) return `/filter ${Object.keys(FILTER_ALIASES).find(key => FILTER_ALIASES[key] === command.value) ?? command.value}`;
+      const word = Object.keys(FILTER_ALIASES).find(key => FILTER_ALIASES[key] === decoded.preset) ?? decoded.preset;
+      return [`/filter ${word}`, ...filterOverrideWords(FILTER_PRESETS[decoded.preset]!, decoded.params)].join(' ');
+    }
     case 'plugin': return `/${command.target ?? ''}${command.value ? ` ${command.value}` : ''}`;
     case 'card': return `/card ${quoteArg(command.value ?? '')}${command.target ? ` ${quoteArg(command.target)}` : ''} ${Math.max(0.01, Number(command.duration) || 2.6)}`;
     case 'flash': return `/flash ${command.value ?? '#000000'} ${Math.max(0.01, Number(command.duration) || 0.5)}`;
