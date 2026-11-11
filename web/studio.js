@@ -8,6 +8,8 @@ import { CharacterIdentityController } from './character-identity-controller.js'
 import { FacePackageController } from './face-package-controller.js';
 import { FaceFitController, FACE_FEATURE_LABELS, FACE_BASIC_FEATURES, FACE_SPLIT_FEATURES, faceFeatureEditorMarkup } from './face-fit-controller.js';
 import { CharacterSpeechController } from './character-speech-controller.js';
+import { MouthTimingController } from './mouth-timing-controller.js';
+import { renderPortraitWorkbench } from './portrait-workbench.js';
 import { ProjectLinkHost } from './project-link.js';
 import { diagnoseWorkspaceAssets } from './workspace-diagnostics.js';
 import { backupBeforeRecovery, isRecoveryWorkspace } from './recovery-workspace.js';
@@ -133,6 +135,8 @@ let editVersion = 0;
 const runtimeFiles = new Map();
 const history = new ProjectHistory({limit:120,coalesceMs:750});
 const recoveryStore = new IndexedDbProjectRecoveryStore();
+let mouthTiming = null;
+let portraitTarget = { characterId: null, expression: 'default', followLine: true, scope: 'line' };
 const voiceHost = new ProjectLinkHost({
   owner:window, getProject:()=>project, getWorkspace:()=>workspace,
   getSelectedLineId:()=>currentLine()?.id,
@@ -525,13 +529,6 @@ function bindLayerSet(container,set,slots){
 function characterExpressionNames(character){return [...new Set(['default',...Object.keys(character?.layerExpressions||{}),...Object.keys(character?.expressions||{}),...Object.keys(character?.puppet?.expressionPresets||{})])]}
 
 
-const PUPPET_EXPR_PARAMS=[
-  ['eyeSquash','眼睛压扁',0.6,1.25,0.01],
-  ['browY','眉毛高度',-1,1,0.02],
-  ['browAngle','眉毛角度',-1,1,0.02],
-  ['mouthY','嘴巴高度',-1,1,0.02],
-  ['mouthTilt','嘴巴倾斜',-1,1,0.02]
-];
 
 // Ported from the user's earlier LipSync Studio English mouth inventory.
 // Dedicated English mouths are optional; renderer preserves that tool's
@@ -546,13 +543,7 @@ const ENGLISH_MOUTH_SLOTS=[
   ['mouthTh','th / dh','think · this','舌尖齿间'],
   ['mouthM','m / b / p','mom · bad · put','双唇闭合']
 ];
-function englishMouthGrid(set){return `<div class="layer-grid">${ENGLISH_MOUTH_SLOTS.map(([slot,ipa,example,hint])=>`<label class="muted" title="${escapeHtml(hint)}"><span>${ipa}</span> <span class="summary-meta">${escapeHtml(example)}</span><select data-layer-slot="${slot}">${imageAssetOptions(set[slot])}</select></label>`).join('')}</div><div class="muted">可选。未绑定时沿用旧工具的 fallback：æ→A，ʊ/w→U，ɔ→O，ə/f/th/m→默认闭嘴。</div>`}
-function puppetParameter(character,id){character.puppet=normalizePuppetRig(character.puppet);return character.puppet.parameters.find(p=>p.id===id)}
-function expressionParamValue(character,expression,id){const p=puppetParameter(character,id);return character.puppet.expressionPresets?.[expression]?.[id]??p?.defaultValue??0}
-function bindExpressionParameterControls(container,character,expression){
-  character.puppet=normalizePuppetRig(character.puppet);character.puppet.expressionPresets[expression]??={};
-  for(const input of container.querySelectorAll('[data-puppet-param]'))input.oninput=()=>{const id=input.dataset.puppetParam;character.puppet.expressionPresets[expression][id]=Number(input.value);const out=container.querySelector(`[data-puppet-value="${CSS.escape(id)}"]`);if(out)out.textContent=Number(input.value).toFixed(2);scheduleSave('调整表情形变',`puppet-param:${character.id}:${expression}:${id}`);compile();renderState()};
-}
+function englishMouthGrid(set){return `<div class="layer-grid">${ENGLISH_MOUTH_SLOTS.map(([slot,ipa,example,hint])=>`<label class="muted" title="${escapeHtml(hint)}"><span>${ipa}</span> <span class="summary-meta">${escapeHtml(example)}</span><select data-layer-slot="${slot}">${imageAssetOptions(set[slot])}</select></label>`).join('')}</div><div class="muted">可选。未绑定时：æ→A，ʊ/w→U，ɔ→O，ə→E（没有 E 再用 A），f/th/m→默认闭嘴。</div>`}
 function bindWarpEditor(container,character,expression){
   const canvas=container.querySelector('[data-warp-canvas]'),partSelect=container.querySelector('[data-warp-part]'),reset=container.querySelector('[data-warp-reset]');if(!canvas||!partSelect)return;
   const ctx=canvas.getContext('2d');let offsets=[],drag=-1;
@@ -739,11 +730,11 @@ function renderCharacters(){
   bindFaceNamingGuide(card);
   faceFitController.mount(card,character,activeFaceTemplate);
   const exprHost=card.querySelector('[data-layer-expressions]');
-  const expressionNames=[...new Set([...Object.keys(character.layerExpressions||{}),...Object.keys(character.expressions||{}),...Object.keys(character.puppet.expressionPresets||{})])].filter(Boolean);
+  const expressionNames=[...new Set([...Object.keys(character.layerExpressions||{}),...Object.keys(character.expressions||{}),...Object.keys(character.puppet.expressionPresets||{})])].filter(name=>name&&(name!=='default'||character.layerExpressions?.default||character.expressions?.default));
   for(const name of expressionNames){const set=character.layerExpressions[name]??(character.layerExpressions[name]={});character.puppet.expressionPresets[name]??={};
-    const row=document.createElement('div');row.className='card stack';row.innerHTML=`<div class="expr-row"><input data-expr-name value="${escapeHtml(name)}"><button data-remove class="small danger">×</button></div><div class="layer-grid"><label class="muted">覆盖层<select data-layer-slot="overlay">${imageAssetOptions(set.overlay)}</select></label><label class="muted">底图（可留空继承）<select data-layer-slot="base">${imageAssetOptions(set.base)}</select></label><label class="muted">睁眼<select data-layer-slot="eyesOpen">${imageAssetOptions(set.eyesOpen)}</select></label><label class="muted">闭眼<select data-layer-slot="eyesClosed">${imageAssetOptions(set.eyesClosed)}</select></label><label class="muted">眉毛<select data-layer-slot="brows">${imageAssetOptions(set.brows)}</select></label><label class="muted">瞳孔<select data-layer-slot="pupils">${imageAssetOptions(set.pupils)}</select></label><label class="muted">睁眼眼皮<select data-layer-slot="eyelidsOpen">${imageAssetOptions(set.eyelidsOpen)}</select></label><label class="muted">闭眼眼皮<select data-layer-slot="eyelidsClosed">${imageAssetOptions(set.eyelidsClosed)}</select></label><label class="muted">闭嘴<select data-layer-slot="mouthClosed">${imageAssetOptions(set.mouthClosed)}</select></label><label class="muted">张嘴<select data-layer-slot="mouthOpen">${imageAssetOptions(set.mouthOpen)}</select></label></div><details><summary>参数形变 <span class="summary-meta">轻量</span></summary><div class="stack disclosure-body">${PUPPET_EXPR_PARAMS.map(([id,label,min,max,step])=>`<label class="muted">${label} <span data-puppet-value="${id}">${Number(expressionParamValue(character,name,id)).toFixed(2)}</span><input data-puppet-param="${id}" type="range" min="${min}" max="${max}" step="${step}" value="${expressionParamValue(character,name,id)}"></label>`).join('')}</div></details><details class="advanced-only"><summary>网格拉形变 <span class="summary-meta">3×3 lattice</span></summary><div class="stack disclosure-body"><div class="row"><select data-warp-part style="width:auto"><option value="mouth">嘴巴</option><option value="eyes">眼睛</option><option value="brows">眉毛</option><option value="eyelids">眼皮</option><option value="pupils">瞳孔</option><option value="overlay">覆盖层</option><option value="base">底图</option></select><button data-warp-reset class="small">重置网格</button></div><canvas data-warp-canvas width="260" height="196" style="width:100%;max-width:320px;border:1px solid #2b3448;border-radius:9px;touch-action:none"></canvas><div class="muted">这是 Inochi2D LatticeDeformer 的轻量子集：拖动 9 个控制点，形变只在这个表情激活。</div></div></details><details><summary>表情五元音</summary><div class="layer-grid five" style="margin-top:6px">${['A','I','U','E','O'].map(v=>`<label class="muted">${v}<select data-layer-slot="mouth${v}">${imageAssetOptions(set['mouth'+v])}</select></label>`).join('')}</div></details><details><summary>表情英语音素口型 <span class="summary-meta">可选</span></summary><div class="disclosure-body">${englishMouthGrid(set)}</div></details>`;
+    const row=document.createElement('div');row.className='card stack';row.innerHTML=`<div class="expr-row"><input data-expr-name value="${escapeHtml(name)}"><button data-remove class="small danger">×</button></div><div class="layer-grid"><label class="muted">覆盖层<select data-layer-slot="overlay">${imageAssetOptions(set.overlay)}</select></label><label class="muted">底图（可留空继承）<select data-layer-slot="base">${imageAssetOptions(set.base)}</select></label><label class="muted">睁眼<select data-layer-slot="eyesOpen">${imageAssetOptions(set.eyesOpen)}</select></label><label class="muted">闭眼<select data-layer-slot="eyesClosed">${imageAssetOptions(set.eyesClosed)}</select></label><label class="muted">眉毛<select data-layer-slot="brows">${imageAssetOptions(set.brows)}</select></label><label class="muted">瞳孔<select data-layer-slot="pupils">${imageAssetOptions(set.pupils)}</select></label><label class="muted">睁眼眼皮<select data-layer-slot="eyelidsOpen">${imageAssetOptions(set.eyelidsOpen)}</select></label><label class="muted">闭眼眼皮<select data-layer-slot="eyelidsClosed">${imageAssetOptions(set.eyelidsClosed)}</select></label><label class="muted">闭嘴<select data-layer-slot="mouthClosed">${imageAssetOptions(set.mouthClosed)}</select></label><label class="muted">张嘴<select data-layer-slot="mouthOpen">${imageAssetOptions(set.mouthOpen)}</select></label></div><div class="row"><button data-open-portrait class="small" type="button">调视线 / 眉毛 / 嘴形…</button><span class="muted">在施工台「立绘」页</span></div><details><summary>表情五元音</summary><div class="layer-grid five" style="margin-top:6px">${['A','I','U','E','O'].map(v=>`<label class="muted">${v}<select data-layer-slot="mouth${v}">${imageAssetOptions(set['mouth'+v])}</select></label>`).join('')}</div></details><details><summary>表情英语音素口型 <span class="summary-meta">可选</span></summary><div class="disclosure-body">${englishMouthGrid(set)}</div></details>`;
     bindLayerSet(row,set,['base','overlay','eyesOpen','eyesClosed','eyelidsOpen','eyelidsClosed','pupils','brows','mouthClosed','mouthOpen','mouthA','mouthI','mouthU','mouthE','mouthO','mouthSchwa','mouthAe','mouthUu','mouthOo','mouthW','mouthF','mouthTh','mouthM']);
-    bindExpressionParameterControls(row,character,name);bindWarpEditor(row,character,name);
+    row.querySelector('[data-open-portrait]').onclick=()=>openPortraitWorkbench(character.id,name);
     row.querySelector('[data-remove]').onclick=()=>{delete character.layerExpressions[name];delete character.expressions[name];delete character.puppet.expressionPresets[name];character.puppet.parameters=character.puppet.parameters.filter(p=>!p.id.startsWith(`exprWarp:${name}:`));for(const line of project.lines)if(line.speakerId===character.id&&line.expression===name)line.expression='default';invalidateMediaCaches();scheduleSave('删除表情',`character-expression:${character.id}`);renderAll()};
     row.querySelector('[data-expr-name]').onchange=e=>{const next=e.target.value.trim();if(!next||next===name||character.layerExpressions[next]||character.expressions[next]||character.puppet.expressionPresets[next]){e.target.value=name;return}character.layerExpressions[next]=character.layerExpressions[name];delete character.layerExpressions[name];if(character.expressions[name]){character.expressions[next]=character.expressions[name];delete character.expressions[name]}character.puppet.expressionPresets[next]=character.puppet.expressionPresets[name]||{};delete character.puppet.expressionPresets[name];for(const line of project.lines)if(line.speakerId===character.id&&line.expression===name)line.expression=next;scheduleSave('重命名表情',`character-expression:${character.id}`);renderAll()};exprHost.append(row);
   }
@@ -1022,6 +1013,8 @@ function renderInspectorTakes(){
 }
 function renderInspector(){
   renderInspectorTakes();
+  mouthTiming??=new MouthTimingController({$,getProject:()=>project,currentLine,resolveAsset,scheduleSave,onChanged:()=>renderAll()});
+  mouthTiming.render();
   let beat=currentBeat();if(selectedBeatId&&!beat)selectedBeatId=null;
   const card=$('#inspectorCard'),beatBlock=$('#beatInspectorBlock');
   if(beat){renderBeatInspector(beat);return}
@@ -1074,11 +1067,16 @@ function renderVoiceLineWorkbench(){
   host.append(openDetail);
 }
 function setWorkbenchTab(tab){
-  const allowed=['performance','audio','voice','animation'];if(!allowed.includes(tab))tab='performance';uiPrefs.workbenchTab=tab;saveUiPrefs();
+  const allowed=['performance','audio','voice','animation','portrait'];if(!allowed.includes(tab))tab='performance';uiPrefs.workbenchTab=tab;saveUiPrefs();
   document.querySelectorAll('[data-workbench-tab]').forEach(button=>button.classList.toggle('active',button.dataset.workbenchTab===tab));
   document.querySelectorAll('[data-workbench-pane]').forEach(pane=>pane.hidden=pane.dataset.workbenchPane!==tab);
-  if(tab==='audio')audioWorkbench?.render();if(tab==='voice')renderVoiceLineWorkbench();
+  if(tab==='audio')audioWorkbench?.render();if(tab==='voice')renderVoiceLineWorkbench();if(tab==='portrait')renderPortraitPane();
 }
+function renderPortraitPane(){
+  const host=$('#workbenchPortrait');if(!host||host.hidden)return;
+  renderPortraitWorkbench(host,{project,line:currentLine(),perf:currentPerf(),escapeHtml,characterExpressionNames,normalizePuppetRig,bindWarpEditor,target:portraitTarget,setTarget:next=>{portraitTarget=next},rerender:renderPortraitPane,onChange:(label,key)=>{scheduleSave(label,key);compile();renderState();void renderPreviewStatic()}});
+}
+function openPortraitWorkbench(characterId,expression){portraitTarget={characterId,expression,followLine:false,scope:'expression'};setWorkbenchTab('portrait');if(uiPrefs.workbenchSize==='collapsed')setWorkbenchSize('standard');$('#workbench')?.scrollIntoView?.({block:'nearest'})}
 function setWorkbenchSize(size){
   if(!['collapsed','standard','expanded','custom'].includes(size))size='standard';
   uiPrefs.workbenchSize=size;const bench=$('#workbench');bench.dataset.size=size;
@@ -1198,7 +1196,7 @@ function setContentView(view,{persist=true,render=true}={}){
   syncCenterContext();
   if(render)renderCurrentView();
 }
-function renderAll(){if(!project)return;selectedIndex=Math.max(0,Math.min(selectedIndex,Math.max(0,project.lines.length-1)));refreshSearch();compile();updateToolbarOptions();renderCurrentView();renderInspector();stageDirectEditor?.render();cameraDirectEditor?.render();sceneViewport?.render();renderStageQuickControls();renderAnimationPane();renderVoiceLineWorkbench();audioWorkbench?.render();updateSelectionUi();updateHistoryUi();void renderPreviewStatic();emitProjectState()}
+function renderAll(){if(!project)return;selectedIndex=Math.max(0,Math.min(selectedIndex,Math.max(0,project.lines.length-1)));refreshSearch();compile();updateToolbarOptions();renderCurrentView();renderInspector();stageDirectEditor?.render();cameraDirectEditor?.render();sceneViewport?.render();renderStageQuickControls();renderAnimationPane();renderPortraitPane();renderVoiceLineWorkbench();audioWorkbench?.render();updateSelectionUi();updateHistoryUi();void renderPreviewStatic();emitProjectState()}
 
 function bindEdit(id,fn,event='change',fullRender=true){$('#'+id).addEventListener(event,()=>{const line=currentLine();if(!line)return;fn(line,$('#'+id).value);scheduleSave('编辑台词',`${line.id}:${id}`);if(fullRender)renderAll()})}
 bindEdit('speakerEdit',(l,v)=>l.speakerId=v);bindEdit('typeEdit',(l,v)=>{l.type=v;if(v==='command'){l.text=l.text.startsWith('/')?l.text:'/wait 0';l.mouth='off';syncCommandLine(l)}else l.command=null;if(v==='dice')l.diceRolls??=[];if(v==='hitpoint')ensureHitPoint(l);if(v==='wheel'){l.wheel??={title:'转盘',mode:'history',steps:[{title:'转盘',options:[{id:'a',label:'A',weight:1},{id:'b',label:'B',weight:1}],resultId:'a',resultLabel:'A'}],blockingAuto:false};l.mouth='off';l.duration??=2.8}if(v==='bubble'){ensureBubble(l);l.mouth='off'}});bindEdit('durationEdit',(l,v)=>l.duration=v===''?null:Number(v));bindEdit('textEdit',(l,v)=>{l.text=v;if(l.type==='command')syncCommandLine(l);if(l.type==='bubble')ensureBubble(l).mainText=v},'input',false);$('#textEdit').addEventListener('change',()=>renderAll());for(const button of document.querySelectorAll('[data-text-tag]'))button.addEventListener('click',()=>{const box=$('#textEdit'),tag=button.dataset.textTag,start=box.selectionStart??box.value.length,end=box.selectionEnd??start;const picked=box.value.slice(start,end)||'文字';box.value=`${box.value.slice(0,start)}{${tag}}${picked}{/${tag}}${box.value.slice(end)}`;box.focus();box.setSelectionRange(start+tag.length+2,start+tag.length+2+picked.length);box.dispatchEvent(new Event('input'));box.dispatchEvent(new Event('change'))});bindEdit('expressionEdit',(l,v)=>{if(v==='__inherit__'){l.expressionMode='inherit';return}l.expressionMode='set';l.expression=v});bindEdit('mouthEdit',(l,v)=>l.mouth=v);bindEdit('sfxEdit',(l,v)=>l.sfxAssetId=v||null);bindEdit('textEffectEdit',(l,v)=>l.textEffect=v);bindEdit('textEffectDurationEdit',(l,v)=>l.textEffectDuration=v===''?null:Number(v));

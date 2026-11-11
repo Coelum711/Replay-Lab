@@ -109,6 +109,13 @@ export function defaultPuppetRig(): CharacterPuppetRig {
       ]),
       property('mouthTilt', '嘴巴倾斜', -1, 1, 0, [
         { part: 'mouth', property: 'rotation', keyframes: [{ at: -1, value: -0.14 }, { at: 0, value: 0 }, { at: 1, value: 0.14 }] }
+      ]),
+      // Gaze: moves only the pupil layer(s). -1 = image left / up, 1 = image right / down.
+      property('lookX', '视线左右', -1, 1, 0, [
+        { part: 'pupils', property: 'translateX', keyframes: [{ at: -1, value: -0.03 }, { at: 0, value: 0 }, { at: 1, value: 0.03 }] }
+      ]),
+      property('lookY', '视线上下', -1, 1, 0, [
+        { part: 'pupils', property: 'translateY', keyframes: [{ at: -1, value: -0.018 }, { at: 0, value: 0 }, { at: 1, value: 0.018 }] }
       ])
     ],
     expressionPresets: {}
@@ -140,18 +147,21 @@ function visemeParameters(viseme: Viseme): Pick<Record<string, number>, 'mouthOp
     case 'O': return { mouthOpen: 0.92, mouthWide: -0.45 };
     case 'OO': return { mouthOpen: 0.92, mouthWide: -0.45 }; // fallback → O
     case 'OPEN': return { mouthOpen: 0.78, mouthWide: 0 };
-    // The old tool intentionally fell schwa/f/th/m back to idle when no
-    // dedicated English mouth asset existed. Preserve that behavior here.
-    case 'SCHWA': case 'F': case 'TH': case 'M':
+    // The old tool fell schwa/f/th/m back to idle when no dedicated English
+    // mouth asset existed; schwa now opens slightly instead.
+    case 'SCHWA': return { mouthOpen: 0.35, mouthWide: 0 };
+    case 'F': case 'TH': case 'M':
     default: return { mouthOpen: 0, mouthWide: 0 };
   }
 }
 
-export function evaluatePuppet(character: ReplayCharacter, expression: string, viseme: Viseme, blinking: boolean): EvaluatedPuppetState {
+export function evaluatePuppet(character: ReplayCharacter, expression: string, viseme: Viseme, blinking: boolean, overrides?: Record<string, number>): EvaluatedPuppetState {
   const rig = normalizePuppetRig(character.puppet);
   const values: Record<string, number> = {};
   for (const parameter of rig.parameters) values[parameter.id] = parameter.defaultValue;
   Object.assign(values, rig.expressionPresets[expression] ?? {});
+  // Per-line overrides (gaze, brows, …) sit on top of the expression.
+  if (overrides) Object.assign(values, overrides);
   // Automatic replay drivers intentionally override expression values only for
   // transient speech/blink parameters; expressions still own brows/custom params.
   values.eyeOpen = blinking ? 0 : 1;
@@ -213,4 +223,32 @@ export function setExpressionLatticeWarp(
 export function expressionLatticeWarp(rigInput: CharacterPuppetRig, expression: string, part: PuppetPartName): PuppetVec2[] | null {
   const rig=normalizePuppetRig(rigInput);const id=`exprWarp:${expression}:${part}`;const p=rig.parameters.find(v=>v.id===id);const b=p?.bindings.find(v=>v.part===part&&v.property==='deform');const end=b?.keyframes.slice().sort((a,b)=>a.at-b.at).at(-1)?.value;
   return Array.isArray(end)?end.map(v=>({...v})):null;
+}
+
+/**
+ * Effective per-line overrides at `localTime`: eases (smoothstep) from the
+ * previous line's overrides to this line's over `seconds`. Parameters missing
+ * on one side use the expression's value, so pure function of time.
+ */
+export function linePuppetOverridesAt(
+  character: ReplayCharacter,
+  expression: string,
+  to: Record<string, number> | undefined,
+  from: Record<string, number> | undefined,
+  localTime: number,
+  seconds = 0.3
+): Record<string, number> | undefined {
+  if (!from) return to && Object.keys(to).length ? to : undefined;
+  const span = Math.max(0, Number(seconds) || 0);
+  const t = span <= 0 ? 1 : Math.max(0, Math.min(1, localTime / span));
+  const k = t * t * (3 - 2 * t);
+  if (k >= 1) return to && Object.keys(to).length ? to : undefined;
+  const rig = normalizePuppetRig(character.puppet);
+  const base = (id: string) => rig.expressionPresets[expression]?.[id] ?? rig.parameters.find(p => p.id === id)?.defaultValue ?? 0;
+  const out: Record<string, number> = {};
+  for (const id of new Set([...Object.keys(from), ...Object.keys(to ?? {})])) {
+    const a = from[id] ?? base(id), b = to?.[id] ?? base(id);
+    out[id] = a + (b - a) * k;
+  }
+  return out;
 }

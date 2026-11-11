@@ -11,6 +11,7 @@ import { resolveSpeechPolicy, resolveCachedSpeech, isTranslationCacheValid } fro
 import { captureSpeechGuard, speechInputFingerprint } from './job.js';
 import { accentSynthesisHint, accentTranslationHint, accentTranslationStyleKey } from '../pronunciation/accent.js';
 import { collapseMouthCues, phonemesToMouthCues } from '../lipsync/viseme.js';
+import { alignTextToEnergy } from '../lipsync/text-energy.js';
 import { resolvePunctuationPauseTiming, resolveSpeechPauseScale, speechTextForGenericTts } from './pause.js';
 
 export type SpeechAudioSource = 'none' | 'imported' | 'builtin-tts' | 'external-tts';
@@ -161,6 +162,10 @@ export async function prepareLineSpeech(project: ReplayProject, line: ReplayLine
         visualLeadMs: 0,
         language: policy.targetLanguage
       }));
+    } else {
+      // No phoneme timing from the engine (Voicebox, emotion bridge, …): spread
+      // the spoken text's syllables over the generated audio's voiced regions.
+      mouthCues = await textEnergyMouthCues(ttsResult, speechText, policy.targetLanguage);
     }
   }
 
@@ -180,6 +185,18 @@ export async function prepareLineSpeech(project: ReplayProject, line: ReplayLine
     audioAssetId: line.audioAssetId,
     ttsResult
   };
+}
+
+/** Text + energy mouth timing for a TTS result; undefined when the audio is not WAV or nothing aligns. */
+export async function textEnergyMouthCues(result: TtsResult, spokenText: string, language?: string): Promise<ReplayLine['mouthCues']> {
+  try {
+    const audio = result.audio;
+    const bytes = audio instanceof Uint8Array ? audio : audio instanceof ArrayBuffer ? new Uint8Array(audio) : new Uint8Array(await (audio as Blob).arrayBuffer());
+    const cues = alignTextToEnergy(speechTextForGenericTts(stripTextTags(spokenText)), decodeWav(bytes), { language: language === 'auto' ? undefined : language });
+    return cues.length ? cues : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export interface PrepareProjectSpeechOptions extends PrepareSpeechOptions {

@@ -420,6 +420,11 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
   const projectSceneGraph = normalizeSceneGraphSettings(project.sceneGraph);
   let sceneGraphState: SceneGraphSettings = normalizeSceneGraphSettings(projectSceneGraph);
 
+  // Per-line puppet overrides as of the previous pushed line (for transitions).
+  let carriedPuppet: Record<string, Record<string, number>> = {};
+  let carriedPuppetExpressions: Record<string, string> = {};
+  let carriedPuppetRoster = new Set<string>();
+
   project.lines.forEach((line, index) => {
     const parallelCommand = line.type === 'command' && parallelCommandIds.has(line.id);
     const parallelTargetMotions = parallelMotionsByTarget.get(line.id);
@@ -611,6 +616,10 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     };
     const blip = line.type !== 'command' && !line.audioAssetId && ['dialogue', 'narration', 'system'].includes(line.type) ? chars.get(line.speakerId)?.textBlip ?? null : null;
     const performanceTransition = parallelTransitionByTarget.get(line.id) ?? (line.type === 'command' && line.command?.kind === 'transition' ? (line.command.value as any) : line.scene?.transition ?? 'cut');
+    const puppet = resolveLinePuppet(line, carriedPuppet, carriedPuppetExpressions, carriedPuppetRoster, performanceState);
+    carriedPuppet = puppet.params;
+    carriedPuppetExpressions = { ...performanceState.expressions };
+    carriedPuppetRoster = new Set(performanceState.roster);
     lines.push({
       index: index + 1,
       lineId: line.id,
@@ -636,6 +645,8 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       expression: moodExpression ?? state.expressions[line.speakerId] ?? line.expression ?? 'default',
       mouth: line.mouth ?? 'auto',
       mouthCues: line.mouthCues ?? [],
+      ...(Object.keys(puppet.params).length ? { puppetParams: puppet.params } : {}),
+      ...(Object.keys(puppet.from).length ? { puppetFrom: puppet.from } : {}),
       stage: performanceStage,
       state: performanceState,
       camera: parallelCameraByTarget.get(line.id) ?? (line.type === 'command' && line.command?.kind === 'camera' ? (line.command.value as any) : line.scene?.camera ?? 'none'),
@@ -722,4 +733,42 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     directorBeats,
     duration: lines.at(-1)?.end ?? 0
   };
+}
+
+function cleanPuppetParams(input: Record<string, number> | undefined): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [id, value] of Object.entries(input ?? {})) if (Number.isFinite(Number(value))) out[id] = Number(value);
+  return out;
+}
+
+function samePuppetParams(a: Record<string, number>, b: Record<string, number>): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) if (a[key] !== b[key]) return false;
+  return true;
+}
+
+/**
+ * A line's puppet overrides, plus where to ease from: only for characters who
+ * were already on stage in the same expression with different values. Command
+ * lines carry the previous overrides unchanged (no transition, no reset).
+ */
+function resolveLinePuppet(
+  line: ReplayLine,
+  carried: Record<string, Record<string, number>>,
+  carriedExpressions: Record<string, string>,
+  carriedRoster: Set<string>,
+  state: PerformanceState
+): { params: Record<string, Record<string, number>>; from: Record<string, Record<string, number>> } {
+  if (line.type === 'command') return { params: Object.fromEntries(Object.entries(carried).map(([id, v]) => [id, { ...v }])), from: {} };
+  const params: Record<string, Record<string, number>> = {};
+  const from: Record<string, Record<string, number>> = {};
+  const ids = new Set([...Object.keys(carried), ...Object.keys(line.puppetParams ?? {})]);
+  for (const id of ids) {
+    const next = cleanPuppetParams(line.puppetParams?.[id]);
+    const previous = carried[id] ?? {};
+    if (Object.keys(next).length) params[id] = next;
+    const sameExpression = (carriedExpressions[id] ?? 'default') === (state.expressions[id] ?? 'default');
+    if (sameExpression && carriedRoster.has(id) && state.roster.includes(id) && !samePuppetParams(previous, next)) from[id] = { ...previous };
+  }
+  return { params, from };
 }

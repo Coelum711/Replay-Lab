@@ -91,6 +91,7 @@ function preserveLineAuthoring(imported: ReplayLine, previous: ReplayLine): Repl
   if (previous.expressionMode === 'set' || (previous.expression && previous.expression !== 'default')) { next.expression = previous.expression ?? 'default'; next.expressionMode = 'set'; }
   if (previous.mouth && previous.mouth !== 'auto') next.mouth = previous.mouth;
   if (previous.mouthCues?.length) next.mouthCues = structuredClone(previous.mouthCues);
+  if (previous.puppetParams && Object.keys(previous.puppetParams).length) next.puppetParams = structuredClone(previous.puppetParams);
   if (previous.audioAssetId) next.audioAssetId = previous.audioAssetId;
   if (previous.sfxAssetId) next.sfxAssetId = previous.sfxAssetId;
   if (previous.bubble) next.bubble = structuredClone(previous.bubble);

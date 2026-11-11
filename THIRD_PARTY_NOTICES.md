@@ -79,3 +79,9 @@ The desktop distribution bundles Electron 44.3.0 (MIT) and Chromium third-party 
 ## wasm-media-encoders 0.7.0
 
 导出给 RPG Maker 的 Ogg Vorbis 编码使用 [wasm-media-encoders](https://github.com/arseneyr/wasm-media-encoders) 0.7.0（MIT），其中以 WebAssembly 形式包含 libvorbis / libogg（BSD-3-Clause，Xiph.Org）与 LAME（LGPL，本项目不调用）。未修改的文件与许可证位于 web/vendor/wasm-media-encoders，说明见其中 REPLAYLAB-NOTICE.md。
+
+## 文本 + 能量口型（src/lipsync/text-energy.ts、syllables.ts）
+
+算法移植自用户自己的 Lip Studio（对口型1.0.html）：analyzeAudio（20 ms 窗 / 10 ms 步长 RMS、中位数 × 灵敏度阈值）与 generateTimeline（按有声段时长分配音节、最后一段吃掉剩余音节）。
+
+`src/lipsync/data/zh-vowels.ts` 是每个汉字（U+4E00–U+9FFF）韵母元音的离线表，由 `scripts/lipsync/dump-pinyin.swift`（macOS 自带 ICU 的 Han-Latin/Mandarin 转写）和 `scripts/lipsync/build-zh-vowel-table.mjs` 生成。ICU 的转写数据来自 Unicode Unihan，适用 Unicode License v3（允许再分发，需保留版权声明：Copyright © 1991-2025 Unicode, Inc.）。表里只存每字一个元音字母和一个唇音标记，约 42 KB。
