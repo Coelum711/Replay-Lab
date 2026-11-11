@@ -27,9 +27,10 @@ const SILENCE = new Set(['pau','sil','sp','cl','xx','<sil>','<eps>']);
 /** Compact English visual inventory used by the user's earlier lip-sync tool. */
 export const ENGLISH_EXTRA_VISEMES = ['SCHWA','AE','UU','OO','W','F','TH','M'] as const;
 
-/** Exact old-site fallback semantics when a dedicated English mouth is absent. */
+/** Fallback when a dedicated English mouth is absent (old-site rules, except ə → E). */
 export const ENGLISH_VISEME_FALLBACK: Record<(typeof ENGLISH_EXTRA_VISEMES)[number], Viseme> = {
-  SCHWA: 'CLOSED',
+  // Lip Studio fell ə back to closed; a relaxed half-open E reads closer.
+  SCHWA: 'E',
   AE: 'A',
   UU: 'U',
   OO: 'O',

@@ -925,6 +925,8 @@ export interface ReplayLine {
   expressionMode?: LineExpressionMode;
   mouth?: 'auto' | 'off' | 'timed';
   mouthCues?: MouthCue[];
+  /** Per-line puppet parameter overrides: characterId → parameter id → value (e.g. lookX). Unset parameters follow the expression. */
+  puppetParams?: Record<string, Record<string, number>>;
   audioAssetId?: string | null;
   sfxAssetId?: string | null;
   /** Per-line voice/SFX timing and mix overrides. */
@@ -970,6 +972,8 @@ export interface ReplaySettings {
   sfxVolume: number;
   audioMix: AudioMixSettings;
   mouthLeadMs: number;
+  /** Seconds a line eases from the previous line's puppet parameters when the expression stays the same. Default 0.3. */
+  puppetTransitionSeconds?: number;
   /** Additional pause strength for speech punctuation and manual '/' pause markers. */
   speechPauseScale: number;
   templateId: string;
@@ -1034,6 +1038,10 @@ export interface PerformanceLine {
   expression: string;
   mouth: 'auto' | 'off' | 'timed';
   mouthCues: MouthCue[];
+  /** This line's per-character puppet overrides (command lines carry the previous line's). */
+  puppetParams?: Record<string, Record<string, number>>;
+  /** Overrides to ease from at the line start (same expression, different values). */
+  puppetFrom?: Record<string, Record<string, number>>;
   stage: Array<{ characterId: string; name: string; position: StagePosition; active: boolean; transform?: StageTransform; motion?: RplGenMethodSpec | null; placementSource: StagePlacementSource }>;
   state: PerformanceState;
   camera: CameraEffect;

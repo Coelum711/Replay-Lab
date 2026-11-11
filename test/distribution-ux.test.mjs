@@ -12,13 +12,14 @@ const prosodyUiJs = await readFile(new URL('../web/prosody-editor.js', import.me
 const desktopUiJs = await readFile(new URL('../web/desktop-ui.js', import.meta.url), 'utf8');
 const translationBridgeJs = await readFile(new URL('../web/translation-bridge-controller.js', import.meta.url), 'utf8');
 const voiceReviewJs = await readFile(new URL('../web/voice-review-controller.js', import.meta.url), 'utf8');
+const mouthTimingJs = await readFile(new URL('../web/mouth-timing-controller.js', import.meta.url), 'utf8');
 
 function buttonIds(html) {
   return [...html.matchAll(/<button\b[^>]*\bid="([^"]+)"/g)].map(match => match[1]);
 }
 
 function assertButtonsReferenced(html, js, label) {
-  js+=desktopUiJs+prosodyUiJs+translationBridgeJs+voiceReviewJs;
+  js+=desktopUiJs+prosodyUiJs+translationBridgeJs+voiceReviewJs+mouthTimingJs;
   const missing = buttonIds(html).filter(id => !js.includes(`#${id}`) && !js.includes(`getElementById('${id}')`) && !js.includes(`getElementById("${id}")`) && !js.includes(`$('${id}')`));
   assert.deepEqual(missing, [], `${label} static buttons must have binding evidence`);
 }

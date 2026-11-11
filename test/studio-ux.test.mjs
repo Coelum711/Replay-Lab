@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const APP_VERSION = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version.replace(/\./g, '\\.');
 const studioHtml = await readFile(new URL('../web/studio.html', import.meta.url), 'utf8');
+const portraitJs = await readFile(new URL('../web/portrait-workbench.js', import.meta.url), 'utf8');
 const studioJs = await readFile(new URL('../web/studio.js', import.meta.url), 'utf8');
 const voiceHtml = await readFile(new URL('../web/index.html', import.meta.url), 'utf8');
 const voiceJs = await readFile(new URL('../web/app.js', import.meta.url), 'utf8');
@@ -119,10 +120,11 @@ test('0.25 character editor supports half-body anchors and Inochi-style paramete
   assert.match(studioJs, /data-layer-slot="brows"/);
   assert.match(studioJs, /data-layer-slot="pupils"/);
   assert.match(studioJs, /data-layer-slot="eyelidsClosed"/);
-  assert.match(studioJs, /参数形变/);
-  assert.match(studioJs, /网格拉形变/);
+  // Parameter sliders and the lattice editor live on the workbench 「立绘」 page since 0.57.
+  assert.match(portraitJs, /眉毛高度/);
+  assert.match(portraitJs, /网格拉形变/);
   assert.match(studioJs, /setExpressionLatticeWarp/);
-  assert.match(studioJs, /data-warp-canvas/);
+  assert.match(portraitJs, /data-warp-canvas/);
 });
 
 

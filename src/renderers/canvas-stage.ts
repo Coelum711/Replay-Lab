@@ -30,7 +30,7 @@ import type {
 } from '../core/types.js';
 import { replayEase } from './easing.js';
 import { evaluateRplGenMotion } from './rplgen-motion.js';
-import { evaluatePuppet, normalizePuppetRig, type PuppetPartState } from '../puppet/rig.js';
+import { evaluatePuppet, linePuppetOverridesAt, normalizePuppetRig, type PuppetPartState } from '../puppet/rig.js';
 import { projectFaceFeature } from '../core/face.js';
 import { projectStageTransform } from '../core/projection.js';
 import { applyLatticeOffsets } from '../puppet/lattice.js';
@@ -107,9 +107,9 @@ function selectLayerSetFaceParts(set: CharacterLayerSet | null | undefined, vise
   const preciseKey = preciseKeyByViseme[viseme];
   const precise = preciseKey ? (src[preciseKey] ?? null) : null;
   const fallbackKey = fallbackKeyByEnglishViseme[viseme];
-  const fallback = fallbackKey ? (src[fallbackKey] ?? null) : null;
+  const fallback = fallbackKey ? (src[fallbackKey] ?? null) : viseme === 'SCHWA' ? (src.mouthE ?? src.mouthA ?? null) : null;
   if (precise || ENGLISH_SPECIAL_VISEMES.has(viseme)) mouth = precise ?? fallback ?? mouth;
-  else if (OPEN_VISEMES.has(viseme)) mouth = src.mouthOpen ?? mouth;
+  else if (OPEN_VISEMES.has(viseme)) mouth = src.mouthOpen ?? (viseme === 'OPEN' ? src.mouthA ?? null : null) ?? mouth;
   return { eyes, eyelids, pupils: src.pupils ?? null, brows: src.brows ?? null, mouth };
 }
 
@@ -242,13 +242,16 @@ export function selectCharacterLayers(
   const preciseKey = preciseKeyByViseme[viseme];
   const precise = preciseKey ? (expr[preciseKey] ?? base[preciseKey] ?? null) : null;
   const fallbackKey = fallbackKeyByEnglishViseme[viseme];
-  const oldSiteFallback = fallbackKey ? (expr[fallbackKey] ?? base[fallbackKey] ?? null) : null;
+  // ə is a relaxed half-open mouth: without its own image, E (then A) reads closer than closed.
+  const oldSiteFallback = fallbackKey ? (expr[fallbackKey] ?? base[fallbackKey] ?? null)
+    : viseme === 'SCHWA' ? (expr.mouthE ?? base.mouthE ?? expr.mouthA ?? base.mouthA ?? null) : null;
   if (precise || ENGLISH_SPECIAL_VISEMES.has(viseme)) {
-    // Exact old-site behavior: dedicated EN image first; æ/ʊ/ɔ/w fall back to
-    // A/U/O/U, while ə/f/th/m fall back to idle/closed.
+    // Old-site behavior: dedicated EN image first; æ/ʊ/ɔ/w fall back to
+    // A/U/O/U, ə to E/A, while f/th/m fall back to idle/closed.
     mouth = precise ?? oldSiteFallback ?? mouth;
   } else if (OPEN_VISEMES.has(viseme)) {
-    mouth = expr.mouthOpen ?? base.mouthOpen ?? mouth;
+    // Generic OPEN (unknown syllable) uses A when there is no plain open mouth.
+    mouth = expr.mouthOpen ?? base.mouthOpen ?? (viseme === 'OPEN' ? expr.mouthA ?? base.mouthA ?? null : null) ?? mouth;
   }
   return {
     base: expr.base ?? base.base ?? null,
@@ -276,7 +279,9 @@ export function selectCharacterFrame(
     const legacyFallback: Partial<Record<Viseme, 'A'|'I'|'U'|'E'|'O'>> = { AE:'A', UU:'U', OO:'O', W:'U' };
     const key = (viseme === 'A' || viseme === 'I' || viseme === 'U' || viseme === 'E' || viseme === 'O') ? viseme : legacyFallback[viseme];
     const precise = key ? set[key] ?? fallback[key] : null;
-    ref = precise ?? set.open ?? fallback.open ?? ref;
+    ref = precise ?? set.open ?? fallback.open ?? (viseme === 'OPEN' ? set.A ?? fallback.A ?? null : null) ?? ref;
+  } else if (viseme === 'SCHWA') {
+    ref = set.E ?? fallback.E ?? set.A ?? fallback.A ?? set.open ?? fallback.open ?? ref;
   }
   if (blinking) ref = set.blink ?? fallback.blink ?? ref;
   return { ref, viseme, blinking };
@@ -874,7 +879,9 @@ export class CanvasStageRenderer {
     const extraRotation = options?.faceFitDriven ? (character.faceFit?.features?.[featureName]?.rotation ?? 0) : 0;
     this.ctx.save();
     this.ctx.globalAlpha*=clamp(state.opacity,0,1);
-    this.ctx.translate(x+pivotX*dw+state.translateX*dw,y+pivotY*dh+state.translateY*dh);
+    // Gaze offsets are in whole-character units, so face-fit pupils (drawn in a small feature box) move as far as full-size pupil layers.
+    const moveW=part==='pupils'?geometry.dw:dw,moveH=part==='pupils'?geometry.dh:dh;
+    this.ctx.translate(x+pivotX*dw+state.translateX*moveW,y+pivotY*dh+state.translateY*moveH);
     this.ctx.rotate(state.rotation + extraRotation);
     this.ctx.scale(state.scaleX,state.scaleY);
     this.ctx.translate(-pivotX*dw,-pivotY*dh);
@@ -910,11 +917,11 @@ export class CanvasStageRenderer {
     return this.performance.faceTemplates?.find(template => template.id === id) ?? null;
   }
 
-  private async drawLayeredActor(character: ReplayCharacter, selection: CharacterLayerSelection, rect: ReturnType<typeof stageRect>, focusScale: number, expression: string): Promise<boolean> {
+  private async drawLayeredActor(character: ReplayCharacter, selection: CharacterLayerSelection, rect: ReturnType<typeof stageRect>, focusScale: number, expression: string, overrides?: Record<string, number>): Promise<boolean> {
     const base = await this.image(selection.base);
     if (!base) return false;
     const geometry=this.puppetGeometry(character,base,rect,focusScale);
-    const puppet=evaluatePuppet(character,expression,selection.viseme,selection.blinking);
+    const puppet=evaluatePuppet(character,expression,selection.viseme,selection.blinking,overrides);
     const template=this.faceTemplateFor(character);
     const templateSelection = selectLayerSetFaceParts(template?.layers, selection.viseme, selection.blinking);
     await this.drawPuppetPart(selection.base,'base',geometry,puppet.parts.base,character);
@@ -1558,7 +1565,8 @@ export class CanvasStageRenderer {
           const mirror = shouldMirrorActor(character, actor);
           this.ctx.save();
           if (mirror) { this.ctx.translate(rect.cx * 2, 0); this.ctx.scale(-1, 1); }
-          const layeredDrawn = hasLayerModel ? await this.drawLayeredActor(character, layerSelection, rect, focusScale, expressionName) : false;
+          const puppetOverrides = linePuppetOverridesAt(character, expressionName, line.puppetParams?.[actor.characterId], line.puppetFrom?.[actor.characterId], localTime, this.performance.settings.puppetTransitionSeconds ?? 0.3);
+          const layeredDrawn = hasLayerModel ? await this.drawLayeredActor(character, layerSelection, rect, focusScale, expressionName, puppetOverrides) : false;
           const image = layeredDrawn ? null : await this.image(selection.ref);
           if (image) {
             const geometry = this.puppetGeometry(character, image, rect, focusScale);
