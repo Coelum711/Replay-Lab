@@ -1,3 +1,4 @@
+import { pluginCommand, pluginFilter, pluginTransition, reportPluginError, hash01 as pluginHash } from '../plugins/stage-plugins.js';
 import { drawEmote, drawTaggedText, drawTransitionCover, MASK_TRANSITIONS, MASK_TRANSITION_SECONDS, screenFilterCss, drawScreenFilterOverlay, drawChapterCard } from './stage-fx.js';
 import type {
   CharacterLayerSet,
@@ -32,6 +33,9 @@ import { replayEase } from './easing.js';
 import { evaluateRplGenMotion } from './rplgen-motion.js';
 import { evaluatePuppet, linePuppetOverridesAt, normalizePuppetRig, type PuppetPartState } from '../puppet/rig.js';
 import { projectFaceFeature } from '../core/face.js';
+import { hasBodyArt, resolveBody, type ResolvedBody } from '../core/body.js';
+import type { CharacterBodyLayer } from '../core/types.js';
+import { paintBodyLayers } from './body-composite.js';
 import { projectStageTransform } from '../core/projection.js';
 import { applyLatticeOffsets } from '../puppet/lattice.js';
 
@@ -70,6 +74,9 @@ export interface CustomObjectInteractionOverride {
   stateId?: string | null;
   transform?: Partial<CustomObjectTransform>;
 }
+
+/** Character art the stage draws: a decoded image or a flattened body canvas (which carries natural size). */
+type StageImage = HTMLImageElement | (HTMLCanvasElement & { naturalWidth: number; naturalHeight: number });
 
 export interface FrameSelection {
   ref: string | null;
@@ -181,6 +188,11 @@ export function pseudoViseme(text: string, localTime: number, duration: number):
   return Math.sin((localTime / cycle) * Math.PI * 2) > 0.18 ? 'OPEN' : 'CLOSED';
 }
 
+
+/** Words of a plugin command, honouring the quotes formatDirectorCommand adds. */
+function splitPluginArgs(value: string): string[] {
+  return [...String(value ?? '').matchAll(/"((?:[^"\\]|\\.)*)"|(\S+)/g)].map(m => m[1] !== undefined ? m[1].replace(/\\(.)/g, '$1') : m[2]!);
+}
 
 export function revealText(line: Pick<PerformanceLine, 'text'|'textEffect'|'textEffectDuration'|'duration'>, localTime: number): string {
   if (line.textEffect === 'all' || !line.text) return line.text;
@@ -510,7 +522,7 @@ function affineTriangle(
 
 function drawLatticeImage(
   ctx: CanvasRenderingContext2D,
-  image: HTMLImageElement,
+  image: StageImage,
   width: number,
   height: number,
   columns: number,
@@ -538,7 +550,9 @@ export class CanvasStageRenderer {
   private ctx: CanvasRenderingContext2D;
   private readonly resolveAsset: BrowserAssetResolver;
   private imageCache = new Map<string, Promise<HTMLImageElement | null>>();
-  private imageBoundsCache = new WeakMap<HTMLImageElement, {x:number;y:number;w:number;h:number}>();
+  private imageBoundsCache = new WeakMap<StageImage, {x:number;y:number;w:number;h:number}>();
+  /** Flattened body stacks, keyed by their layers; pure in the layer list so cached across frames. */
+  private bodyCompositeCache = new Map<string, Promise<StageImage | null>>();
   private objectUrls = new Set<string>();
   private scratchCanvases: HTMLCanvasElement[] = [];
   private maskCanvases: HTMLCanvasElement[] = [];
@@ -615,6 +629,7 @@ export class CanvasStageRenderer {
     for (const character of this.performance.characters) {
       if (!character.showOnStage) continue;
       for (const set of [character.images, ...Object.values(character.expressions ?? {})]) if (set?.idle) refs.add(set.idle);
+      for (const art of Object.values(character.bodies ?? {})) for (const layer of art?.layers ?? []) if (layer?.asset) refs.add(layer.asset);
     }
     const queue = [...refs];
     const worker = async (): Promise<void> => { for (let ref = queue.shift(); ref; ref = queue.shift()) await this.image(ref); };
@@ -626,6 +641,7 @@ export class CanvasStageRenderer {
     this.objectUrls.clear();
     this.imageCache.clear();
     this.imageBoundsCache = new WeakMap();
+    this.bodyCompositeCache.clear();
   }
 
   destroy(): void { this.clearAssetCache(); this.scratchCanvases = []; this.maskCanvases = []; }
@@ -837,7 +853,7 @@ export class CanvasStageRenderer {
     this.ctx.restore();
   }
 
-  private alphaBounds(image: HTMLImageElement): {x:number;y:number;w:number;h:number} {
+  private alphaBounds(image: StageImage): {x:number;y:number;w:number;h:number} {
     const cached=this.imageBoundsCache.get(image);if(cached)return cached;
     try{
       const max=192,scale=Math.min(1,max/Math.max(image.naturalWidth,image.naturalHeight));const w=Math.max(1,Math.round(image.naturalWidth*scale)),h=Math.max(1,Math.round(image.naturalHeight*scale));
@@ -847,7 +863,7 @@ export class CanvasStageRenderer {
     }catch{const result={x:0,y:0,w:1,h:1};this.imageBoundsCache.set(image,result);return result;}
   }
 
-  private puppetGeometry(character: ReplayCharacter, base: HTMLImageElement, rect: ReturnType<typeof stageRect>, focusScale: number): {x:number;y:number;dw:number;dh:number} {
+  private puppetGeometry(character: ReplayCharacter, base: StageImage, rect: ReturnType<typeof stageRect>, focusScale: number): {x:number;y:number;dw:number;dh:number} {
     const layout=normalizePuppetRig(character.puppet).layout;
     const framingScale=({portrait:1.16,bust:1.10,half:1.04,full:1,auto:1} as const)[layout.framing]??1;
     const scale=Math.min(rect.maxH/base.naturalHeight,rect.maxW/base.naturalWidth)*focusScale*Math.max(0.1,layout.scale||1)*framingScale;
@@ -856,7 +872,7 @@ export class CanvasStageRenderer {
     return {dw,dh,x:rect.cx-dw*anchorX+dw*(layout.offsetX||0),y:rect.floor-dh*anchorY+dh*(layout.offsetY||0)};
   }
 
-  private drawTemplatePartGeometry(character: ReplayCharacter, featureName: FaceTemplateFeatureName, baseGeometry: {x:number;y:number;dw:number;dh:number}, image: HTMLImageElement, baseImage: HTMLImageElement): {x:number;y:number;dw:number;dh:number} {
+  private drawTemplatePartGeometry(character: ReplayCharacter, featureName: FaceTemplateFeatureName, baseGeometry: {x:number;y:number;dw:number;dh:number}, image: StageImage, baseImage: StageImage): {x:number;y:number;dw:number;dh:number} {
     const fit = character.faceFit;
     const feature = fit?.features?.[featureName];
     if (!feature) return baseGeometry;
@@ -870,12 +886,12 @@ export class CanvasStageRenderer {
     return { x: cx - dw / 2, y: cy - dh / 2, dw, dh };
   }
 
-  private async drawPuppetPart(ref: string | null, part: PuppetPartName, geometry: {x:number;y:number;dw:number;dh:number}, state: PuppetPartState, character: ReplayCharacter, options?: { faceFitDriven?: boolean; faceFeature?: FaceTemplateFeatureName; baseImage?: HTMLImageElement | null }): Promise<void> {
-    const image=await this.image(ref);if(!image)return;
+  private async drawPuppetPart(ref: string | null, part: PuppetPartName, geometry: {x:number;y:number;dw:number;dh:number}, state: PuppetPartState, character: ReplayCharacter, options?: { faceFitDriven?: boolean; faceFeature?: FaceTemplateFeatureName; baseImage?: StageImage | null; image?: StageImage | null; pivotImage?: StageImage | null }): Promise<void> {
+    const image=options?.image??await this.image(ref);if(!image)return;
     const rig=normalizePuppetRig(character.puppet);const partRig=rig.parts?.[part];const lattice=partRig?.lattice;
     const featureName = options?.faceFeature ?? (part as FaceTemplateFeatureName);
     const baseGeometry = options?.faceFitDriven && options.baseImage ? this.drawTemplatePartGeometry(character, featureName, geometry, image, options.baseImage) : geometry;
-    const {x,y,dw,dh}=baseGeometry;const bounds=this.alphaBounds(image);const pivotX=partRig?.pivotX??(bounds.x+bounds.w/2),pivotY=partRig?.pivotY??(bounds.y+bounds.h/2);
+    const {x,y,dw,dh}=baseGeometry;const bounds=this.alphaBounds(options?.pivotImage??image);const pivotX=partRig?.pivotX??(bounds.x+bounds.w/2),pivotY=partRig?.pivotY??(bounds.y+bounds.h/2);
     const extraRotation = options?.faceFitDriven ? (character.faceFit?.features?.[featureName]?.rotation ?? 0) : 0;
     this.ctx.save();
     this.ctx.globalAlpha*=clamp(state.opacity,0,1);
@@ -917,14 +933,39 @@ export class CanvasStageRenderer {
     return this.performance.faceTemplates?.find(template => template.id === id) ?? null;
   }
 
-  private async drawLayeredActor(character: ReplayCharacter, selection: CharacterLayerSelection, rect: ReturnType<typeof stageRect>, focusScale: number, expression: string, overrides?: Record<string, number>): Promise<boolean> {
-    const base = await this.image(selection.base);
+  /** Flattens body layers onto one canvas the size of the first layer. Non-normal blends only touch painted pixels. */
+  private bodyComposite(layers: CharacterBodyLayer[], size?: { width: number; height: number }): Promise<StageImage | null> {
+    const key = JSON.stringify([size?.width ?? 0, size?.height ?? 0, layers.map(layer => [layer.asset, layer.blend ?? 'normal', layer.opacity ?? 1])]);
+    let promise = this.bodyCompositeCache.get(key);
+    if (!promise) {
+      promise = (async () => {
+        const images = await Promise.all(layers.map(layer => this.image(layer.asset)));
+        const first = images.find(Boolean);
+        if (!first) return null;
+        if (layers.length === 1 && !size && (layers[0]!.opacity ?? 1) >= 1) return first;
+        const width = size?.width ?? first.naturalWidth, height = size?.height ?? first.naturalHeight;
+        const canvas = document.createElement('canvas') as HTMLCanvasElement & { naturalWidth: number; naturalHeight: number };
+        canvas.width = width; canvas.height = height; canvas.naturalWidth = width; canvas.naturalHeight = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return first;
+        const tmp = document.createElement('canvas'); tmp.width = width; tmp.height = height;
+        paintBodyLayers(ctx, tmp.getContext('2d'), layers, images, width, height);
+        return canvas;
+      })().catch(() => { this.bodyCompositeCache.delete(key); return null; });
+      this.bodyCompositeCache.set(key, promise);
+    }
+    return promise;
+  }
+
+  private async drawLayeredActor(character: ReplayCharacter, selection: CharacterLayerSelection, rect: ReturnType<typeof stageRect>, focusScale: number, expression: string, overrides?: Record<string, number>, body?: ResolvedBody | null): Promise<boolean> {
+    const base = body ? await this.bodyComposite(body.back) : await this.image(selection.base);
     if (!base) return false;
+    const front = body?.front.length ? await this.bodyComposite(body.front, { width: base.naturalWidth, height: base.naturalHeight }) : null;
     const geometry=this.puppetGeometry(character,base,rect,focusScale);
     const puppet=evaluatePuppet(character,expression,selection.viseme,selection.blinking,overrides);
     const template=this.faceTemplateFor(character);
     const templateSelection = selectLayerSetFaceParts(template?.layers, selection.viseme, selection.blinking);
-    await this.drawPuppetPart(selection.base,'base',geometry,puppet.parts.base,character);
+    await this.drawPuppetPart(selection.base,'base',geometry,puppet.parts.base,character,{image:base});
 
     const sideParts=this.sideTemplateSelection(character,expression,template,selection.blinking);
     const sideByPart=new Map<PuppetPartName,typeof sideParts>();
@@ -944,6 +985,8 @@ export class CanvasStageRenderer {
     const mouthRef=selection.mouth??templateSelection.mouth??null;
     if(mouthRef)await this.drawPuppetPart(mouthRef,'mouth',geometry,puppet.parts.mouth,character,{faceFitDriven:!selection.mouth,faceFeature:'mouth',baseImage:base});
     if(selection.overlay)await this.drawPuppetPart(selection.overlay,'overlay',geometry,puppet.parts.overlay,character);
+    // Pose layers marked "in front of the face" (a hand on the chin) move with the body.
+    if(front)await this.drawPuppetPart(null,'base',geometry,puppet.parts.base,character,{image:front,pivotImage:base});
     return true;
   }
 
@@ -1550,6 +1593,9 @@ export class CanvasStageRenderer {
           const blinking = blinkAt(character, localTime, isCurrent && OPEN_VISEMES.has(viseme), this.faceTemplateFor(character)?.layers);
           const selection = selectCharacterFrame(character, line.state.expressions[actor.characterId] ?? 'default', viseme, blinking);
           const layerSelection = selectCharacterLayers(character, line.state.expressions[actor.characterId] ?? 'default', viseme, blinking);
+          // Body art (outfit × pose) replaces the expression's base; the expression then only changes the face.
+          const body = hasBodyArt(character) ? resolveBody(character, line.state.outfits?.[actor.characterId], line.state.poses?.[actor.characterId]) : null;
+          if (body) layerSelection.base = body.back[0]!.asset;
           const focusMode = this.performance.settings.dimOthers ? (this.performance.settings.speakerFocus ?? 'subtle') : 'none';
           let alpha = 1, focusScale = 1;
           if (focusMode === 'subtle') { alpha = isCurrent ? 1 : 0.78; focusScale = isCurrent ? 1.02 : 0.985; }
@@ -1566,7 +1612,7 @@ export class CanvasStageRenderer {
           this.ctx.save();
           if (mirror) { this.ctx.translate(rect.cx * 2, 0); this.ctx.scale(-1, 1); }
           const puppetOverrides = linePuppetOverridesAt(character, expressionName, line.puppetParams?.[actor.characterId], line.puppetFrom?.[actor.characterId], localTime, this.performance.settings.puppetTransitionSeconds ?? 0.3);
-          const layeredDrawn = hasLayerModel ? await this.drawLayeredActor(character, layerSelection, rect, focusScale, expressionName, puppetOverrides) : false;
+          const layeredDrawn = hasLayerModel ? await this.drawLayeredActor(character, layerSelection, rect, focusScale, expressionName, puppetOverrides, body) : false;
           const image = layeredDrawn ? null : await this.image(selection.ref);
           if (image) {
             const geometry = this.puppetGeometry(character, image, rect, focusScale);
@@ -1592,11 +1638,15 @@ export class CanvasStageRenderer {
         const side = emote.kind === 'dots' || emote.kind === 'gloom' || emote.kind === 'steam' ? 0 : 1;
         drawEmote(this.ctx, emote.kind, head.x + side * head.h * 0.085, head.y + size * (side ? 0.2 : -0.45), size, localTime - emote.offset, emote.duration);
       }
+      const namedHeads: Record<string, { x: number; y: number; h: number }> = {};
+      for (const [id, head] of heads) { const name = this.character(id)?.name; if (name) namedHeads[name] = head; }
+      this.drawPluginLayer('world', line, localTime, namedHeads);
       await this.drawCustomObjects(line, 'world', localTime);
       this.ctx.restore();
     };
 
-    const graded = screenFilterCss(line.screenFilter);
+    const customFilter = pluginFilter(line.screenFilter);
+    const graded = customFilter ? customFilter.def.css ?? '' : screenFilterCss(line.screenFilter);
     if (graded || line.screenFilter) {
       // Grade the world layer only; the textbox stays readable.
       const target = this.ctx, depth = this.scratchDepth++;
@@ -1605,7 +1655,8 @@ export class CanvasStageRenderer {
         this.ctx = scratchCtx;
         try { await this.withEffects(line.sceneGraph?.worldEffects, drawWorld, line, localTime); } finally { this.ctx = target; this.scratchDepth--; }
         target.save(); if (graded) target.filter = graded; target.drawImage(scratch, 0, 0); target.restore();
-        drawScreenFilterOverlay(target, line.screenFilter, width, height, localTime);
+        if (customFilter?.def.overlay) { target.save(); try { customFilter.def.overlay(target, width, height, localTime); } catch (error) { reportPluginError(`${customFilter.plugin}:${customFilter.name}`, error); } finally { target.restore(); } }
+        else if (!customFilter) drawScreenFilterOverlay(target, line.screenFilter, width, height, localTime);
       } else { this.scratchDepth--; await this.withEffects(line.sceneGraph?.worldEffects, drawWorld, line, localTime); }
     } else await this.withEffects(line.sceneGraph?.worldEffects, drawWorld, line, localTime);
     await this.drawCustomObjects(line, 'screen', localTime);
@@ -1618,18 +1669,42 @@ export class CanvasStageRenderer {
       const uiFx = this.nodeEffects(line, presentationType[0], presentationType[1]);
       await this.withEffects(uiFx.effects, () => this.drawDialogueAndBanner(line, progress, localTime), line, localTime, uiFx.ambient);
     }
+    this.drawPluginLayer('screen', line, localTime, {});
     if (line.transition === 'fade' && localTime < 0.42) {
       const transitionFx = this.nodeEffects(line, 'fx:transition', 'screen.fx');
       await this.withEffects(transitionFx.effects, () => {
         this.ctx.save(); this.ctx.globalAlpha = 1 - replayEase(line.transitionCurve, clamp(localTime / 0.42, 0, 1)); this.ctx.fillStyle = '#000'; this.ctx.fillRect(0, 0, width, height); this.ctx.restore();
       }, line, localTime, transitionFx.ambient);
     }
-    if (MASK_TRANSITIONS.has(line.transition) && !this.renderingTransitionSource) {
+    const customTransition = pluginTransition(line.transition);
+    if ((MASK_TRANSITIONS.has(line.transition) || customTransition) && !this.renderingTransitionSource) {
       const seconds = line.type === 'command' ? Math.max(0.2, line.duration) : MASK_TRANSITION_SECONDS;
       if (localTime < seconds) {
         const previous = await this.previousFrame(index);
-        if (previous) drawTransitionCover(this.ctx, line.transition, localTime / seconds, width, height, previous);
+        if (previous && customTransition) {
+          this.ctx.save();
+          try { customTransition.def.cover(this.ctx, Math.max(0, Math.min(1, localTime / seconds)), width, height, previous); }
+          catch (error) { reportPluginError(`${customTransition.plugin}:${customTransition.name}`, error); }
+          finally { this.ctx.restore(); }
+        } else if (previous) drawTransitionCover(this.ctx, line.transition, localTime / seconds, width, height, previous);
       }
+    }
+  }
+
+  /** Draws every running plugin effect of one layer; each runs isolated so one bad plugin cannot break the frame. */
+  private drawPluginLayer(layer: 'world' | 'screen' | 'top', line: PerformanceLine, localTime: number, heads: Record<string, { x: number; y: number; h: number }>): void {
+    for (const effect of line.pluginEffects ?? []) {
+      const plugin = pluginCommand(effect.name);
+      if (!plugin || (plugin.def.layer ?? 'screen') !== layer) continue;
+      const time = localTime - effect.offset;
+      if (time < 0 || time >= effect.duration) continue;
+      const { width, height } = this.canvas;
+      this.ctx.save();
+      try {
+        plugin.def.draw(this.ctx, { time, duration: effect.duration, progress: Math.max(0, Math.min(1, time / effect.duration)), width, height,
+          args: splitPluginArgs(effect.value), heads, speakerName: line.speakerName, text: line.text, random: pluginHash });
+      } catch (error) { reportPluginError(`${plugin.plugin}:${plugin.name}`, error); }
+      finally { this.ctx.restore(); }
     }
   }
 
@@ -1699,6 +1774,7 @@ export class CanvasStageRenderer {
     try { await this.withEffects(line.sceneGraph?.outputEffects, () => this.renderLineContent(index, localTime), line, localTime); }
     finally { if (shake) this.ctx.restore(); }
     if (line.card) drawChapterCard(this.ctx, line.card, localTime, width, height);
+    this.drawPluginLayer('top', line, localTime, {});
     if (line.flash) this.drawFlash(line.flash, localTime);
   }
 

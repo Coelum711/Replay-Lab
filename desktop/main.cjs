@@ -23,8 +23,18 @@ async function start(){
   }
   function handle(channel,handler){ipcMain.handle(channel,async(event,args)=>{try{trusted(event);return {ok:true,value:await handler(event,args||{})};}catch(error){return {ok:false,error:{message:error.message,name:error.name,code:error.code}};}});}
   const mime={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.svg':'image/svg+xml','.png':'image/png','.md':'text/plain','.wasm':'application/wasm'};
+  // Project plugins: the renderer may only load files the user approved, pinned to their content hash.
+  const approvedPlugins=new Map();
+  const sha256=data=>createHash('sha256').update(data).digest('hex');
   protocol.handle('replaylab',async request=>{
     try{
+      const pluginMatch=new URL(request.url).pathname.match(/^\/__plugins\/([0-9a-f-]{36})\/[^/]+\.js$/);
+      if(pluginMatch){
+        const approved=approvedPlugins.get(pluginMatch[1]);if(!approved)return new Response('插件未授权',{status:403});
+        const data=await files.read(approved.id,approved.relative);
+        if(sha256(data)!==approved.sha)return new Response('插件文件在授权后被修改，请重新确认',{status:409});
+        return new Response(data,{headers:{'Content-Type':'text/javascript','X-Content-Type-Options':'nosniff','Cache-Control':'no-store'}});
+      }
       const target=appResource(request.url,app.getAppPath());
       const data=await fs.readFile(target),headers={'Content-Type':mime[path.extname(target)]||'application/octet-stream','X-Content-Type-Options':'nosniff'};
       if(target.endsWith('.html')){
@@ -119,6 +129,31 @@ async function start(){
       await fs.writeFile(path.join(directory,name),Buffer.from(item.data),{flag:'wx'});written.push(name);
     }
     return {directory,written};
+  });
+  handle('replay:plugins',async(event,request)=>{
+    const id=String(request.id||'');
+    if(request.action==='scan'){
+      let names=[];try{names=(await files.list(id,'plugins')).map(item=>String(item.path||item)).filter(name=>/^plugins\/[^/]+\.js$/i.test(name.replace(/^\.?\//,'')))}catch{return []}
+      const out=[];
+      for(const relative of names.slice(0,32)){
+        const data=await files.read(id,relative);if(data.byteLength>512*1024){out.push({name:path.basename(relative),size:data.byteLength,tooLarge:true});continue}
+        const text=Buffer.from(data).toString('utf8');const header=(text.match(/^\s*\/\*\*?([\s\S]*?)\*\//)?.[1]||text.match(/^\s*((?:\/\/.*\n?){1,6})/)?.[1]||'').replace(/^\s*[*/]+ ?/gm,'').trim().slice(0,400);
+        out.push({name:path.basename(relative),size:data.byteLength,sha:sha256(data),header});
+      }
+      return out;
+    }
+    if(request.action==='load'){
+      const out=[];
+      for(const item of (Array.isArray(request.files)?request.files:[]).slice(0,32)){
+        const name=path.basename(String(item.name||''));if(!/\.js$/i.test(name))continue;
+        const relative=`plugins/${name}`,data=await files.read(id,relative);
+        if(sha256(data)!==item.sha){out.push({name,error:'文件在确认之后被修改了，请重新确认'});continue}
+        const token=randomUUID();approvedPlugins.set(token,{id,relative,sha:item.sha});
+        out.push({name,url:`${APP_ORIGIN}/__plugins/${token}/${encodeURIComponent(name.replace(/[^\w.-]/g,'_'))}`});
+      }
+      return out;
+    }
+    throw Error('未知插件操作');
   });
   handle('replay:stream',async(event,request)=>{
     if(streamOwners.get(request.token)!==event.sender.id)throw Error('保存流不属于当前窗口');

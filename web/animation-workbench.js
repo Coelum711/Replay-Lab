@@ -39,7 +39,7 @@ export function renderAnimationWorkbench(host, ctx) {
   const someone = characterName(targetLine?.speakerId) || characterName(onStage[0]) || project.characters[0]?.name || '角色';
   const templates = [['震动', `/shake 中 1.5 随机`], ['闪屏', '/flash white 0.3'], ['漫符', `/emote ${quote(someone)} 怒 1.6`], ['转场', '/transition 溶解'], ['滤镜', '/filter 回忆'], ['章节卡', '/card 第一话 "副标题" 2.6'], ['停顿', '/wait 0.5'], ['表情', `/expression ${quote(someone)} default`]];
   adders.append(el('span', { className: 'muted', textContent: '加到这句前：' }));
-  for (const [label, text] of templates) { const b = el('button', { className: 'small', textContent: label }); b.dataset.animAdd = label; b.onclick = () => ctx.insertAt(first + (target - first), text); adders.append(b); }
+  for (const [label, text] of [...templates, ...(ctx.pluginTemplates ?? [])]) { const b = el('button', { className: 'small', textContent: label }); b.dataset.animAdd = label; b.onclick = () => ctx.insertAt(first + (target - first), text); adders.append(b); }
   const sound = el('button', { className: 'small', textContent: '声音…' }); sound.onclick = () => ctx.openSound(target); adders.append(sound);
   host.append(adders);
 

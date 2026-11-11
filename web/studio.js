@@ -2,6 +2,7 @@ import { StageDirectEditorController } from './stage-editor-controller.js';
 import { createSoundPicker } from './sound-picker.js';
 import { renderAnimationWorkbench } from './animation-workbench.js';
 import { exportLinesForRpgMaker } from './rpgmaker-export.js';
+import { loadProjectPlugins, forgetPluginApprovals, STARTER_PLUGIN } from './plugin-loader.js';
 import { SceneViewportController } from './scene-viewport-controller.js';
 import { CameraDirectEditorController } from './camera-editor-controller.js';
 import { CharacterIdentityController } from './character-identity-controller.js';
@@ -10,6 +11,8 @@ import { FaceFitController, FACE_FEATURE_LABELS, FACE_BASIC_FEATURES, FACE_SPLIT
 import { CharacterSpeechController } from './character-speech-controller.js';
 import { MouthTimingController } from './mouth-timing-controller.js';
 import { renderPortraitWorkbench } from './portrait-workbench.js';
+import { mountPoseOutfitPanel } from './pose-outfit-panel.js';
+const posePreviewState=new Map();
 import { ProjectLinkHost } from './project-link.js';
 import { diagnoseWorkspaceAssets } from './workspace-diagnostics.js';
 import { backupBeforeRecovery, isRecoveryWorkspace } from './recovery-workspace.js';
@@ -35,6 +38,8 @@ import {
   makeId,
   assetDirectory,
   discoverFolderAssets,
+  pluginCommandList,
+  listStagePlugins,
   sanitizePathPart,
   persistAssetFile,
   ProjectHistory,
@@ -99,7 +104,8 @@ import {
   formatDirectorCommand,
   CustomObjectInteractionController,
   bakeCustomObjectInteractionTake,
-  buildAudioSchedule
+  buildAudioSchedule,
+  characterPoses, characterOutfits,
 } from '../dist/index.js';
 
 const $ = selector => document.querySelector(selector);
@@ -322,7 +328,7 @@ async function chooseWorkspace(recentId,{replaceRecovered=false}={}){
     if(pending){clearTimeout(saveTimer);saveTimer=setTimeout(()=>void saveIfConnected(),350)}
     invalidateMediaCaches();renderAll();
     try{await refreshWorkspace()}catch(error){$('#workspaceDetail').textContent=`工程已连接，但素材列表读取失败：${error.message||error}`}
-    if(project===owner||!owner)void scanAssetFolders({quiet:true});
+    if(project===owner||!owner){void scanAssetFolders({quiet:true});void refreshPlugins()}
     if(reconnect){
       const issues=await diagnoseWorkspaceAssets(owner.assets,chosen);
       if(project!==owner||workspace!==chosen)return;
@@ -700,6 +706,7 @@ function renderCharacters(){
     <div class="grid2"><label class="muted">角色底图 / 立绘<select data-layer-slot="base">${imageAssetOptions(character.layers.base)}</select></label><label class="muted">表情覆盖层（可选）<select data-layer-slot="overlay">${imageAssetOptions(character.layers.overlay)}</select></label></div>
     <details><summary>这个角色自己的五官（只有和通用脸不一样时才用）</summary><div class="stack disclosure-body"><div class="compact-note">如果已经用了“脸部素材 / 共用模板”，这里可以全留空。只给这个角色特别的眉毛、眼睛或嘴时才填。</div><div class="layer-grid"><label class="muted">眼睛 · 睁开<select data-layer-slot="eyesOpen">${imageAssetOptions(character.layers.eyesOpen)}</select></label><label class="muted">眼睛 · 闭眼<select data-layer-slot="eyesClosed">${imageAssetOptions(character.layers.eyesClosed)}</select></label><label class="muted">眼皮 · 睁开<select data-layer-slot="eyelidsOpen">${imageAssetOptions(character.layers.eyelidsOpen)}</select></label><label class="muted">眼皮 · 闭眼<select data-layer-slot="eyelidsClosed">${imageAssetOptions(character.layers.eyelidsClosed)}</select></label><label class="muted">瞳孔<select data-layer-slot="pupils">${imageAssetOptions(character.layers.pupils)}</select></label><label class="muted">眉毛<select data-layer-slot="brows">${imageAssetOptions(character.layers.brows)}</select></label><label class="muted">嘴 · 闭合<select data-layer-slot="mouthClosed">${imageAssetOptions(character.layers.mouthClosed)}</select></label><label class="muted">嘴 · 张开<select data-layer-slot="mouthOpen">${imageAssetOptions(character.layers.mouthOpen)}</select></label></div><details class="advanced-only"><summary>3/4 侧脸 / 异色瞳：左右单独覆盖</summary><div class="layer-grid disclosure-body"><label class="muted">画面左眼 · 睁开<select data-layer-slot="eyeLeftOpen">${imageAssetOptions(character.layers.eyeLeftOpen)}</select></label><label class="muted">画面右眼 · 睁开<select data-layer-slot="eyeRightOpen">${imageAssetOptions(character.layers.eyeRightOpen)}</select></label><label class="muted">画面左眼 · 闭眼<select data-layer-slot="eyeLeftClosed">${imageAssetOptions(character.layers.eyeLeftClosed)}</select></label><label class="muted">画面右眼 · 闭眼<select data-layer-slot="eyeRightClosed">${imageAssetOptions(character.layers.eyeRightClosed)}</select></label><label class="muted">画面左眉<select data-layer-slot="browLeft">${imageAssetOptions(character.layers.browLeft)}</select></label><label class="muted">画面右眉<select data-layer-slot="browRight">${imageAssetOptions(character.layers.browRight)}</select></label><label class="muted">画面左瞳孔<select data-layer-slot="pupilLeft">${imageAssetOptions(character.layers.pupilLeft)}</select></label><label class="muted">画面右瞳孔<select data-layer-slot="pupilRight">${imageAssetOptions(character.layers.pupilRight)}</select></label></div></details><details class="advanced-only"><summary>更多口型 A / I / U / E / O</summary><div class="layer-grid five disclosure-body">${['A','I','U','E','O'].map(v=>`<label class="muted">${v}<select data-layer-slot="mouth${v}">${imageAssetOptions(character.layers['mouth'+v])}</select></label>`).join('')}</div></details><details class="advanced-only"><summary>英语精细口型</summary><div class="disclosure-body">${englishMouthGrid(character.layers)}</div></details></div></details>
     <details><summary>表情组件 <span class="summary-meta">${Object.keys(character.layerExpressions).length}</span></summary><div class="muted disclosure-body" style="padding-bottom:6px">表情只需要填写变化的层；没填的眼睛/嘴/底图会继承默认角色。</div><div data-layer-expressions class="stack"></div><button data-add-layer-expression class="small">+ 表情</button></details>
+    <details data-pose-outfit-details${Object.keys(character.bodies||{}).length?' open':''}><summary>姿势 / 服装 <span class="summary-meta">${Object.keys(character.bodies||{}).length||'没有也能用'}</span></summary><div class="stack disclosure-body" data-pose-outfit></div></details>
     <details class="advanced-only"><summary>整帧立绘兼容（旧项目） <span class="summary-meta">IDLE / OPEN / BLINK</span></summary><div class="stack disclosure-body"><div class="muted">旧式做法是每个口型/眨眼都准备整张完整立绘。新项目建议使用上面的分层素材。</div><div class="grid3">${['idle','open','blink'].map(slot=>`<label class="muted">${({idle:'IDLE',open:'OPEN',blink:'BLINK'})[slot]}<select data-slot="${slot}">${imageAssetOptions(character.images[slot])}</select></label>`).join('')}</div><details><summary>整帧五元音</summary><div class="grid5" style="margin-top:7px">${['A','I','U','E','O'].map(slot=>`<label class="muted">${slot}<select data-slot="${slot}">${imageAssetOptions(character.images[slot])}</select></label>`).join('')}</div></details></div></details>`;
   card.querySelector('[data-name]').onchange=e=>{const next=e.target.value.trim();if(!next||project.characters.some(c=>c.id!==character.id&&c.name===next)){e.target.value=character.name;return}const old=character.name;character.name=next;for(const line of project.lines)if(line.speakerId===character.id&&line.sourceSpeaker===old)line.sourceSpeaker=next;scheduleSave('重命名角色',`character-name:${character.id}`);renderAll()};
   card.querySelector('[data-aliases]').onchange=e=>{const seen=new Set(),aliases=[];for(const raw of e.target.value.split(/[,，;；\n]+/)){const value=raw.trim(),key=normalizeCharacterNameKey(value);if(!value||!key||key===normalizeCharacterNameKey(character.name)||seen.has(key))continue;seen.add(key);aliases.push(value)}character.aliases=aliases;scheduleSave('修改角色导入别名',`character-aliases:${character.id}`);renderAll()};
@@ -738,6 +745,7 @@ function renderCharacters(){
     row.querySelector('[data-remove]').onclick=()=>{delete character.layerExpressions[name];delete character.expressions[name];delete character.puppet.expressionPresets[name];character.puppet.parameters=character.puppet.parameters.filter(p=>!p.id.startsWith(`exprWarp:${name}:`));for(const line of project.lines)if(line.speakerId===character.id&&line.expression===name)line.expression='default';invalidateMediaCaches();scheduleSave('删除表情',`character-expression:${character.id}`);renderAll()};
     row.querySelector('[data-expr-name]').onchange=e=>{const next=e.target.value.trim();if(!next||next===name||character.layerExpressions[next]||character.expressions[next]||character.puppet.expressionPresets[next]){e.target.value=name;return}character.layerExpressions[next]=character.layerExpressions[name];delete character.layerExpressions[name];if(character.expressions[name]){character.expressions[next]=character.expressions[name];delete character.expressions[name]}character.puppet.expressionPresets[next]=character.puppet.expressionPresets[name]||{};delete character.puppet.expressionPresets[name];for(const line of project.lines)if(line.speakerId===character.id&&line.expression===name)line.expression=next;scheduleSave('重命名表情',`character-expression:${character.id}`);renderAll()};exprHost.append(row);
   }
+  {const state=posePreviewState.get(character.id)??{};posePreviewState.set(character.id,state);mountPoseOutfitPanel(card.querySelector('[data-pose-outfit]'),{character,escapeHtml,imageAssetOptions,expressionNames:characterExpressionNames(character),resolveAsset,scheduleSave,invalidate:invalidateMediaCaches,addImageAsset:async(blob,name)=>{const asset={id:makeId('asset'),kind:'character',name,mime:'image/png',metadata:{importedFrom:'psd'}};project.assets.push(asset);runtimeFiles.set(asset.id,blob);if(workspace)await persistAssetFile(workspace,project,asset,blob,`${assetDirectory('character')}/${sanitizePathPart(character.name)}/${asset.id}_${sanitizePathPart(name)}`);return asset.id},rerender:()=>{invalidateMediaCaches();compile();renderAll()},get previewState(){return state},set previewState(v){Object.assign(state,v)}})}
   card.querySelector('[data-add-layer-expression]').onclick=()=>{let i=1,name='表情1';while(character.layerExpressions[name]||character.expressions[name]||character.puppet.expressionPresets[name])name=`表情${++i}`;character.layerExpressions[name]={};character.puppet.expressionPresets[name]={};scheduleSave('新增表情',`character-expression:${character.id}`);renderAll()};
   host.append(card);
 }
@@ -893,7 +901,13 @@ function renderCommandStructuredEditor(line,result){
   const host=$('#commandStructuredEdit');host.innerHTML='';const command=result?.command;if(!command){host.innerHTML='<div class="muted">先把上面的指令文本修到可解析状态；解析成功后这里会出现下拉编辑器。</div>';return}
   const row=document.createElement('div');row.className='stack';
   const bind=(selector,fn)=>{const el=row.querySelector(selector);if(el)el.onchange=()=>fn(el)};
-  if(['dismiss','enter','move','motion','expression'].includes(command.kind)){
+  if(command.kind==='pose'||command.kind==='outfit'){
+    const characterId=command.characterId||project.characters.find(c=>c.showOnStage)?.id||'';const character=project.characters.find(c=>c.id===characterId);
+    const names=command.kind==='pose'?characterPoses(character||{}):characterOutfits(character||{});const current=command.value||'default';
+    row.innerHTML=`<div class="grid2"><label>角色<select data-command-character>${directorCharacterOptions(characterId)}</select></label><label>${command.kind==='pose'?'姿势':'服装'}<select data-command-body-value><option value="default" ${current==='default'?'selected':''}>默认</option>${[...new Set([...names,...(current!=='default'&&!names.includes(current)?[current]:[])])].map(v=>`<option value="${escapeHtml(v)}" ${v===current?'selected':''}>${escapeHtml(v)}${names.includes(v)?'':'（没有这张图）'}</option>`).join('')}</select></label></div>${names.length?'':'<div class="muted">这个角色还没有姿势 / 服装图：在角色卡的「姿势 / 服装」里添加。</div>'}`;
+    bind('[data-command-character]',el=>setDirectorCommand(line,{...command,characterId:el.value,target:project.characters.find(c=>c.id===el.value)?.name||command.target}));
+    bind('[data-command-body-value]',el=>setDirectorCommand(line,{...command,value:el.value}));
+  }else if(['dismiss','enter','move','motion','expression'].includes(command.kind)){
     const characterId=command.characterId||project.characters.find(c=>c.showOnStage)?.id||'';const character=project.characters.find(c=>c.id===characterId);
     const extra=command.kind==='enter'?`<label>站位<select data-command-position>${['auto','left','center','right'].map(v=>`<option value="${v}" ${v===(command.position||'auto')?'selected':''}>${positionLabel(v)}</option>`).join('')}</select></label>`:command.kind==='expression'?`<label>表情<select data-command-expression>${characterExpressionNames(character).map(v=>`<option value="${escapeHtml(v)}" ${v===(command.expression||'default')?'selected':''}>${escapeHtml(v)}</option>`).join('')}</select></label>`:command.kind==='motion'?`<div class="grid2"><label>已有自定义动作<input data-command-motion list="stageMethodPresets" value="${escapeHtml(command.value||'shake_minor')}"></label><label>动作时长<input data-command-duration type="number" min="0" step="0.05" value="${Number(command.duration)||0.5}"></label></div>`:command.kind==='move'?`<div class="muted">在上方舞台点击“可视化摆放”，直接拖动该角色；/move 行只记录事件位置，精确数值由画布写入工程。</div>`:'';
     row.innerHTML=`<div class="grid2"><label>角色<select data-command-character>${directorCharacterOptions(characterId)}</select></label>${extra}</div>`;
@@ -942,6 +956,8 @@ function directorTemplate(kind){
   const quote=v=>/\s/.test(v)?`"${v}"`:v;
   const firstAsset=k=>project.assets.find(a=>a.kind===k)?.name;
   if(kind==='expression'){const expr=characterExpressionNames(c).find(x=>x!=='default')||'default';return `/expression ${quote(name)} ${quote(expr)}`}
+  if(kind==='pose'){const pose=characterPoses(c||{})[1]||characterPoses(c||{})[0]||'抱臂';return `/pose ${quote(name)} ${quote(pose)}`}
+  if(kind==='outfit'){const outfit=characterOutfits(c||{})[1]||characterOutfits(c||{})[0]||'衬衫';return `/outfit ${quote(name)} ${quote(outfit)}`}
   if(kind==='motion')return `/motion ${quote(name)} shake_minor 0.5`;
   if(kind==='move')return `/move ${quote(name)}`;
   if(kind==='enter')return `/enter ${quote(name)} auto`;
@@ -1031,6 +1047,7 @@ function renderInspector(){
   const outline=buildScriptOutline(project.lines),chapters=[];const seenChapterKeys=new Set();for(const entry of outline){if(seenChapterKeys.has(entry.chapterKey))continue;seenChapterKeys.add(entry.chapterKey);chapters.push(entry)}
   $('#sceneTargetChapter').innerHTML=chapters.map(entry=>`<option value="${entry.index}" ${entry.chapterKey===outlineEntry?.chapterKey?'selected':''}>${escapeHtml(entry.chapter)}</option>`).join('');
   const character=project.characters.find(c=>c.id===line.speakerId);const exprs=characterExpressionNames(character);const expressionValue=line.expressionMode==='set'?(line.expression||'default'):'__inherit__';$('#expressionEdit').innerHTML=`<option value="__inherit__" ${expressionValue==='__inherit__'?'selected':''}>继承上一表情</option>`+exprs.map(name=>`<option value="${escapeHtml(name)}" ${name===expressionValue?'selected':''}>${escapeHtml(name)}</option>`).join('');
+  {const poses=characterPoses(character||{}),wrap=$('#poseEditWrap'),poseValue=line.pose||'__inherit__';if(wrap){wrap.hidden=!poses.length||line.type==='command';$('#poseEdit').innerHTML=`<option value="__inherit__" ${poseValue==='__inherit__'?'selected':''}>继承上一姿势</option><option value="default" ${poseValue==='default'?'selected':''}>默认姿势</option>`+[...new Set([...poses,...(poseValue!=='__inherit__'&&poseValue!=='default'&&!poses.includes(poseValue)?[poseValue]:[])])].map(name=>`<option value="${escapeHtml(name)}" ${name===poseValue?'selected':''}>${escapeHtml(name)}</option>`).join('')}}
   $('#mouthEdit').value=line.mouth||'auto';$('#sfxEdit').innerHTML=simpleAssetOptions('sfx',line.sfxAssetId,'无 SFX');
   $('#backgroundEdit').innerHTML=patchSelectOptions('background','background');$('#cgEdit').innerHTML=patchSelectOptions('cg','cg');$('#bgmEdit').innerHTML=patchSelectOptions('bgm','bgm');$('#ambientEdit').innerHTML=patchSelectOptions('ambient','ambient');const cgPresentation=line.scene?.cgPresentation||{};$('#cgFitEdit').value=cgPresentation.fit||'contain';$('#cgMotionEdit').value=cgPresentation.motion||'none';$('#cgHideCharacters').checked=!!cgPresentation.hideCharacters;$('#cgHideTextbox').checked=!!cgPresentation.hideTextbox;renderSceneEffectsControls(line);
   $('#cameraEdit').value=line.scene?.camera||'none';$('#transitionEdit').value=line.scene?.transition||'cut';$('#cameraCurveEdit').value=line.scene?.cameraCurve||'sigmoid';$('#transitionCurveEdit').value=line.scene?.transitionCurve||'quadraticR';$('#backgroundMethodEdit').value=line.scene?.backgroundMethod||'replace';$('#backgroundMethodDurationEdit').value=line.scene?.backgroundMethodDuration??'';$('#stageMethodEdit').value=line.stageMethod?.name||'';$('#stageMethodDurationEdit').value=line.stageMethod?.duration??'';$('#diceRollsEdit').value=formatDiceRolls(line.diceRolls);const hp=line.hitPoint;$('#hpLabelEdit').value=hp?.label||'';$('#hpMaxEdit').value=hp?.max??'';$('#hpBeforeEdit').value=hp?.before??'';$('#hpAfterEdit').value=hp?.after??'';renderStageControls(line);
@@ -1088,7 +1105,7 @@ function renderAnimationPane(){
   const host=$('#animationWorkbenchHost');if(!host||!project)return;
   const keep=(fn)=>{const anchor=currentLine();fn();const at=project.lines.indexOf(anchor);if(at>=0)selectedIndex=at;compile();renderAll()};
   const commandLine=text=>{const line=createLine(project,'Director',text,'command');line.mouth='off';line.duration=null;syncCommandLine(line);return line};
-  renderAnimationWorkbench(host,{project,line:currentLine(),index:selectedIndex,perf:currentPerf(),performance:performanceDoc,
+  renderAnimationWorkbench(host,{project,line:currentLine(),index:selectedIndex,perf:currentPerf(),performance:performanceDoc,pluginTemplates:pluginCommandList().map(c=>[`🧩 ${c.name}`,c.template]),
     preview(target){selectedIndex=target;renderAll();$('#playLine')?.click()},
     insertAt(at,text){keep(()=>{project.lines.splice(at,0,commandLine(text));scheduleSave('添加演出',`anim-add:${at}`)})},
     setText(at,text){const line=project.lines[at];if(!line)return;line.text=text;syncCommandLine(line);scheduleSave('修改演出',`${line.id}:anim`);compile();renderAll()},
@@ -1199,7 +1216,7 @@ function setContentView(view,{persist=true,render=true}={}){
 function renderAll(){if(!project)return;selectedIndex=Math.max(0,Math.min(selectedIndex,Math.max(0,project.lines.length-1)));refreshSearch();compile();updateToolbarOptions();renderCurrentView();renderInspector();stageDirectEditor?.render();cameraDirectEditor?.render();sceneViewport?.render();renderStageQuickControls();renderAnimationPane();renderPortraitPane();renderVoiceLineWorkbench();audioWorkbench?.render();updateSelectionUi();updateHistoryUi();void renderPreviewStatic();emitProjectState()}
 
 function bindEdit(id,fn,event='change',fullRender=true){$('#'+id).addEventListener(event,()=>{const line=currentLine();if(!line)return;fn(line,$('#'+id).value);scheduleSave('编辑台词',`${line.id}:${id}`);if(fullRender)renderAll()})}
-bindEdit('speakerEdit',(l,v)=>l.speakerId=v);bindEdit('typeEdit',(l,v)=>{l.type=v;if(v==='command'){l.text=l.text.startsWith('/')?l.text:'/wait 0';l.mouth='off';syncCommandLine(l)}else l.command=null;if(v==='dice')l.diceRolls??=[];if(v==='hitpoint')ensureHitPoint(l);if(v==='wheel'){l.wheel??={title:'转盘',mode:'history',steps:[{title:'转盘',options:[{id:'a',label:'A',weight:1},{id:'b',label:'B',weight:1}],resultId:'a',resultLabel:'A'}],blockingAuto:false};l.mouth='off';l.duration??=2.8}if(v==='bubble'){ensureBubble(l);l.mouth='off'}});bindEdit('durationEdit',(l,v)=>l.duration=v===''?null:Number(v));bindEdit('textEdit',(l,v)=>{l.text=v;if(l.type==='command')syncCommandLine(l);if(l.type==='bubble')ensureBubble(l).mainText=v},'input',false);$('#textEdit').addEventListener('change',()=>renderAll());for(const button of document.querySelectorAll('[data-text-tag]'))button.addEventListener('click',()=>{const box=$('#textEdit'),tag=button.dataset.textTag,start=box.selectionStart??box.value.length,end=box.selectionEnd??start;const picked=box.value.slice(start,end)||'文字';box.value=`${box.value.slice(0,start)}{${tag}}${picked}{/${tag}}${box.value.slice(end)}`;box.focus();box.setSelectionRange(start+tag.length+2,start+tag.length+2+picked.length);box.dispatchEvent(new Event('input'));box.dispatchEvent(new Event('change'))});bindEdit('expressionEdit',(l,v)=>{if(v==='__inherit__'){l.expressionMode='inherit';return}l.expressionMode='set';l.expression=v});bindEdit('mouthEdit',(l,v)=>l.mouth=v);bindEdit('sfxEdit',(l,v)=>l.sfxAssetId=v||null);bindEdit('textEffectEdit',(l,v)=>l.textEffect=v);bindEdit('textEffectDurationEdit',(l,v)=>l.textEffectDuration=v===''?null:Number(v));
+bindEdit('speakerEdit',(l,v)=>l.speakerId=v);bindEdit('typeEdit',(l,v)=>{l.type=v;if(v==='command'){l.text=l.text.startsWith('/')?l.text:'/wait 0';l.mouth='off';syncCommandLine(l)}else l.command=null;if(v==='dice')l.diceRolls??=[];if(v==='hitpoint')ensureHitPoint(l);if(v==='wheel'){l.wheel??={title:'转盘',mode:'history',steps:[{title:'转盘',options:[{id:'a',label:'A',weight:1},{id:'b',label:'B',weight:1}],resultId:'a',resultLabel:'A'}],blockingAuto:false};l.mouth='off';l.duration??=2.8}if(v==='bubble'){ensureBubble(l);l.mouth='off'}});bindEdit('durationEdit',(l,v)=>l.duration=v===''?null:Number(v));bindEdit('textEdit',(l,v)=>{l.text=v;if(l.type==='command')syncCommandLine(l);if(l.type==='bubble')ensureBubble(l).mainText=v},'input',false);$('#textEdit').addEventListener('change',()=>renderAll());for(const button of document.querySelectorAll('[data-text-tag]'))button.addEventListener('click',()=>{const box=$('#textEdit'),tag=button.dataset.textTag,start=box.selectionStart??box.value.length,end=box.selectionEnd??start;const picked=box.value.slice(start,end)||'文字';box.value=`${box.value.slice(0,start)}{${tag}}${picked}{/${tag}}${box.value.slice(end)}`;box.focus();box.setSelectionRange(start+tag.length+2,start+tag.length+2+picked.length);box.dispatchEvent(new Event('input'));box.dispatchEvent(new Event('change'))});bindEdit('poseEdit',(l,v)=>{if(v==='__inherit__')delete l.pose;else l.pose=v});bindEdit('expressionEdit',(l,v)=>{if(v==='__inherit__'){l.expressionMode='inherit';return}l.expressionMode='set';l.expression=v});bindEdit('mouthEdit',(l,v)=>l.mouth=v);bindEdit('sfxEdit',(l,v)=>l.sfxAssetId=v||null);bindEdit('textEffectEdit',(l,v)=>l.textEffect=v);bindEdit('textEffectDurationEdit',(l,v)=>l.textEffectDuration=v===''?null:Number(v));
 $('#lineLanguageEdit').addEventListener('change',()=>{const l=currentLine();if(!l)return;l.speech??={};l.speech.languageOverride=$('#lineLanguageEdit').value.trim()||null;scheduleSave('修改本句朗读语言',`${l.id}:speech-language`);renderAll()});$('#speechTextEdit').addEventListener('change',()=>{const l=currentLine();if(!l)return;l.speech??={};l.speech.textOverride=$('#speechTextEdit').value||null;scheduleSave('修改本句朗读文本',`${l.id}:speech-text`);renderAll()});$('#linePauseScaleEdit').addEventListener('input',()=>{const l=currentLine();if(!l)return;l.speech??={};l.speech.pauseScale=Number($('#linePauseScaleEdit').value);$('#linePauseScaleValue').textContent=`${Number(l.speech.pauseScale).toFixed(1)}×`;scheduleSave('修改本句停顿强度',`${l.id}:speech-pause`)});
 $('#linePauseReset').onclick=()=>{const l=currentLine();if(!l)return;l.speech??={};delete l.speech.pauseScale;scheduleSave('恢复本句停顿继承',`${l.id}:speech-pause-reset`);renderInspector()};
 bindEdit('dialogueStyleEdit',(l,v)=>l.dialogueStyleId=v||null);bindEdit('bubbleDefinitionEdit',(l,v)=>ensureBubble(l).definitionId=v||null);bindEdit('bubbleHeaderEdit',(l,v)=>ensureBubble(l).headerText=v);bindEdit('bubbleMainEdit',(l,v)=>{const b=ensureBubble(l);b.mainText=v;l.text=v},'input',false);$('#bubbleMainEdit').addEventListener('change',()=>renderAll());
@@ -1284,6 +1301,38 @@ async function scanAssetFolders({quiet=false}={}){
   return found.length;
 }
 $('#scanAssetFolders').onclick=()=>void scanAssetFolders();
+/** Asks before running any project plugin; the user sees each file's name, size and description. */
+function confirmPlugins(pending){return new Promise(resolve=>{
+  const overlay=document.createElement('div');overlay.style.cssText='position:fixed;inset:0;background:rgba(6,6,12,.6);display:flex;align-items:center;justify-content:center;z-index:9999';
+  const panel=document.createElement('div');panel.className='card stack';panel.dataset.pluginConfirm='1';panel.style.cssText='width:min(560px,92vw);max-height:84vh;overflow:auto;background:#1d1b27;border:1px solid #3a3746;border-radius:12px;padding:16px;gap:10px';
+  panel.innerHTML=`<strong>这个工程带了 ${pending.length} 个插件</strong><div class="muted">插件是代码，会在 Replay Lab 里运行，能在画面上画东西。只启用你自己写的、或者你信任的人给的插件。文件以后被改动，会再问你一次。</div>`;
+  const boxes=[];
+  for(const item of pending){const row=document.createElement('label');row.className='stack';row.style.cssText='border:1px solid #3a3746;border-radius:8px;padding:8px;gap:4px';const head=document.createElement('span');const box=document.createElement('input');box.type='checkbox';box.dataset.pluginName=item.name;const name=document.createElement('strong');name.textContent=` ${item.name}`;const size=document.createElement('small');size.className='muted';size.textContent=` ${(item.size/1024).toFixed(1)} KB`;head.append(box,name,size);const desc=document.createElement('small');desc.className='muted';desc.style.whiteSpace='pre-wrap';desc.textContent=item.header||'（文件开头没有说明注释）';row.append(head,desc);panel.append(row);boxes.push(box)}
+  const actions=document.createElement('div');actions.className='row';const ok=document.createElement('button');ok.className='small primary';ok.textContent='启用勾选的插件';ok.dataset.pluginApprove='1';const no=document.createElement('button');no.className='small';no.textContent='这次都不启用';no.dataset.pluginDecline='1';actions.append(ok,no);panel.append(actions);
+  const done=value=>{overlay.remove();resolve(value)};ok.onclick=()=>done(boxes.filter(b=>b.checked).map(b=>b.dataset.pluginName));no.onclick=()=>done([]);
+  overlay.append(panel);document.body.append(overlay);
+})}
+/** Loads approved project plugins, then re-reads command lines that only plugins understand. */
+async function refreshPlugins({ask=true}={}){
+  if(!project||!workspace){renderPluginPanel();return}
+  const owner=project;let result;
+  try{result=await loadProjectPlugins(workspace,{confirm:ask?confirmPlugins:null})}catch(error){$('#pluginStatus').textContent=`读取插件失败：${error.message||error}`;return}
+  if(project!==owner)return;
+  for(const line of owner.lines)if(line.type==='command'&&(!line.command||line.command.kind==='plugin'))syncCommandLine(line);
+  renderPluginPanel(result);compile();renderAll();
+}
+function renderPluginPanel(result){
+  const host=$('#pluginList');if(!host)return;host.replaceChildren();
+  const plugins=listStagePlugins();
+  for(const info of plugins){const row=document.createElement('div');row.className='muted';row.style.fontSize='12px';const parts=[info.commands.length?`指令 ${info.commands.map(n=>'/'+n).join(' ')}`:'',info.transitions.length?`转场 ${info.transitions.join(' ')}`:'',info.filters.length?`滤镜 ${info.filters.join(' ')}`:''].filter(Boolean);row.textContent=`🧩 ${info.label} — ${parts.join(' · ')||'没有注册任何东西'}${info.error?` · ⚠ ${info.error}`:''}`;if(info.error)row.style.color='#ffae42';host.append(row)}
+  for(const item of result?.results||[])if(item.error&&!plugins.some(p=>p.id===`project:${item.name}`)){const row=document.createElement('div');row.style.cssText='font-size:12px;color:#ff8a8a';row.textContent=`⚠ ${item.name}：${item.error}`;host.append(row)}
+  for(const item of result?.skipped||[]){const row=document.createElement('div');row.className='muted';row.style.fontSize='12px';row.textContent=`○ ${item.name}（${item.reason}）`;host.append(row)}
+  $('#pluginStatus').textContent=workspace?(plugins.length?`已启用 ${plugins.length} 个插件`:'这个工程没有启用的插件。把 .js 文件放进工程的 plugins 文件夹即可。'):'连接工程文件夹后才能使用插件。';
+  const transition=$('#transitionEdit');if(transition){for(const option of [...transition.options])if(option.dataset.plugin)option.remove();for(const info of plugins)for(const name of info.transitions){const option=document.createElement('option');option.value=name;option.textContent=`🧩 ${name}`;option.dataset.plugin='1';transition.append(option)}}
+}
+$('#rescanPlugins').onclick=()=>void refreshPlugins();
+$('#reconfirmPlugins').onclick=()=>{forgetPluginApprovals();void refreshPlugins()};
+$('#createStarterPlugin').onclick=async()=>{if(!workspace){$('#pluginStatus').textContent='请先连接工程文件夹';return}const path='plugins/示例-爱心飘落.js';if(await workspace.exists(path)){$('#pluginStatus').textContent=`${path} 已经存在`;return}await workspace.write(path,new Blob([STARTER_PLUGIN],{type:'text/javascript'}),'text/javascript');$('#pluginStatus').textContent=`已写入 ${path}，正在加载…`;await refreshPlugins()};
 /** Shared by the batch button and the single-line panel. */
 async function exportForRpgMaker(lines,status){
   if(!project||!lines.length)return;const say=text=>{if(status)status.textContent=text};
