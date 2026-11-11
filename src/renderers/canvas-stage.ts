@@ -1661,7 +1661,7 @@ export class CanvasStageRenderer {
     } else await this.withEffects(line.sceneGraph?.worldEffects, drawWorld, line, localTime);
     await this.drawCustomObjects(line, 'screen', localTime);
 
-    if (!(line.state.cg && line.state.cgPresentation?.hideTextbox)) {
+    if (!this.hideDialogue && !(line.state.cg && line.state.cgPresentation?.hideTextbox)) {
       const presentationType = line.type === 'dice' ? ['system:dice','screen.presentation'] as const
         : line.type === 'wheel' ? ['system:wheel','screen.presentation'] as const
         : line.type === 'hitpoint' ? ['system:hitpoint','screen.presentation'] as const
@@ -1689,6 +1689,28 @@ export class CanvasStageRenderer {
         } else if (previous) drawTransitionCover(this.ctx, line.transition, localTime / seconds, width, height, previous);
       }
     }
+  }
+
+  /** Editor hand-off: render the stage without the textbox (the textbox goes out as stills). */
+  hideDialogue = false;
+
+  /** Draws only this line's textbox, fully revealed, onto a transparent canvas of the stage's size. */
+  async renderDialogueOverlay(index: number, target: HTMLCanvasElement): Promise<boolean> {
+    const line = this.performance.lines[index];
+    if (!line || line.type === 'command' || (line.state.cg && line.state.cgPresentation?.hideTextbox)) return false;
+    const ctx = target.getContext('2d');
+    if (!ctx) return false;
+    target.width = this.canvas.width; target.height = this.canvas.height;
+    ctx.clearRect(0, 0, target.width, target.height);
+    const previous = this.ctx;
+    this.ctx = ctx;
+    try {
+      const localTime = Math.max(0, line.duration - 0.001);
+      const kind = line.type === 'dice' ? ['system:dice', 'screen.presentation'] as const : line.type === 'wheel' ? ['system:wheel', 'screen.presentation'] as const : line.type === 'hitpoint' ? ['system:hitpoint', 'screen.presentation'] as const : ['ui:dialogue', 'screen.dialogue'] as const;
+      const fx = this.nodeEffects(line, kind[0], kind[1]);
+      await this.withEffects(fx.effects, () => this.drawDialogue({ ...line, textEffect: 'all' }, 1, localTime), line, localTime, fx.ambient);
+    } finally { this.ctx = previous; }
+    return true;
   }
 
   /** Draws every running plugin effect of one layer; each runs isolated so one bad plugin cannot break the frame. */
