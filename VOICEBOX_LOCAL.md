@@ -1,6 +1,6 @@
 # Voicebox Local integration (0.53.2-dev)
 
-0.54.2 adds an **optional, separate** MLX clone/instruct companion on port 17494.
+0.54.2 adds an **optional, separate** MLX clone/instruct companion that runs on a separate local address.
 See `VOICE_BRIDGE_CN.md`. It reads Voicebox profiles but never patches Voicebox.
 The stable path below remains unchanged. Experimental fields are NOT sent to stock `/generate`.
 
