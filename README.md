@@ -121,7 +121,7 @@
    ```bash
    xattr -dr com.apple.quarantine "/Applications/Replay Lab.app"
    ```
-3. 配音需要另外安装 [Voicebox](https://github.com/jamiepine/voicebox)，在里面为角色建好声音（上传几秒到几十秒的干净录音），Replay Lab 默认连接 `http://127.0.0.1:17493`。详见 [`VOICEBOX_LOCAL.md`](VOICEBOX_LOCAL.md)。
+3. 配音需要另外安装 [Voicebox](https://github.com/jamiepine/voicebox)，在里面为角色建好声音（上传几秒到几十秒的干净录音），Replay Lab 默认连接本机上的 Voicebox，一般不用改地址。详见 [`VOICEBOX_LOCAL.md`](VOICEBOX_LOCAL.md)。
 4. 可选：想让克隆声音听从「生气」「拖长尾音」这类提示，安装情绪桥（运行 `INSTALL_VOICE_BRIDGE.command`，需要约 9 GB 模型）。详见 [`VOICE_BRIDGE_CN.md`](VOICE_BRIDGE_CN.md)。
 
 > 提示：Voicebox 与情绪桥同时用 1.7B 模型时，显存吃紧的电脑可能会让 Voicebox 崩溃。批量生成时建议先跑完情绪桥的句子，再跑普通克隆的句子。
