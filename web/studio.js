@@ -18,7 +18,7 @@ import { ProjectLinkHost } from './project-link.js';
 import { diagnoseWorkspaceAssets } from './workspace-diagnostics.js';
 import { backupBeforeRecovery, isRecoveryWorkspace } from './recovery-workspace.js';
 import { createExportSession } from './export-session.js';
-import './desktop-client.js';
+import {desktopCall} from './desktop-client.js';
 import { VirtualScriptList } from './virtual-script-list.js';
 import { renderLineTakePanel, onVoiceQueueChange, voiceNotice, clearVoiceNotice } from './line-take-panel.js';
 import { CustomObjectEditorController } from './custom-object-editor-controller.js';
@@ -246,7 +246,7 @@ function syncRecoveryConnection(){
 }
 function setSaveStatus(text,tone=''){$('#projectState').textContent=text;$('#projectState').className=`status ${tone}`.trim();emitProjectState()}
 function scheduleRecovery(){if(!project)return;clearTimeout(recoveryTimer);recoveryTimer=setTimeout(()=>void saveRecoverySnapshot(),500)}
-async function saveRecoverySnapshot(){if(!project)return;const owner=project;try{await recoveryStore.save(project,{label:project.title||'临时工程',workspaceId:workspace?.id||recoveryConnection?.workspaceId||null,workspaceLabel:workspace?.label||recoveryConnection?.workspaceLabel||null});if(project===owner&&!workspace&&!recoveryConnection)setSaveStatus('未保存到文件夹')}catch(error){console.warn('Recovery save failed',error);if(project===owner&&!workspace)setSaveStatus('自动备份失败 · 请保存','warn')}}
+async function saveRecoverySnapshot(){if(!project)return;const owner=project;try{await recoveryStore.save(project,{label:project.title||'临时工程',workspaceId:workspace?.id||recoveryConnection?.workspaceId||null,workspaceLabel:workspace?.label||recoveryConnection?.workspaceLabel||null,workspaceRecentId:workspace?.recentId||recoveryConnection?.workspaceRecentId||null});if(project===owner&&!workspace&&!recoveryConnection)setSaveStatus('未保存到文件夹')}catch(error){console.warn('Recovery save failed',error);if(project===owner&&!workspace)setSaveStatus('自动备份失败 · 请保存','warn')}}
 let manifestDirty=false;
 function scheduleSave(label='编辑',key=mutationKey()){if(!project)return;editVersion++;history.capture(project,label,key);updateHistoryUi();scheduleRecovery();if(!workspace||workspaceConflict)return;manifestDirty=true;setSaveStatus('有修改待保存','warn');clearTimeout(saveTimer);saveTimer=setTimeout(()=>void saveIfConnected(),350)}
 function mediaKinds(){return new Set(['voice','bgm','ambient','sfx'])}
@@ -1608,7 +1608,9 @@ async function initRecovery(){
   if(recoverySnapshot?.project?.lines?.length){const age=Math.max(0,Date.now()-recoverySnapshot.updatedAt),mins=Math.round(age/60000);$('#recoveryText').textContent=`${recoverySnapshot.project.title||'未命名工程'} · ${recoverySnapshot.project.lines.length} 行 · ${mins<60?mins+' 分钟前':Math.round(mins/60)+' 小时前'}${recoverySnapshot.workspaceLabel?' · 原目录 '+recoverySnapshot.workspaceLabel:''}`;$('#recoveryBar').hidden=false;project=createProject('未命名 Replay');history.reset(project,'等待恢复');renderAll();$('#importDetails').open=false;return}
   await setProject(createProject('未命名 Replay'),'新建工程');$('#importDetails').open=true;
 }
-$('#restoreRecovery').onclick=async()=>{if(!recoverySnapshot)return;clearTimeout(saveTimer);runtimeFiles.clear();workspace=null;workspaceConflict=false;$('#reloadWorkspace').hidden=true;$('#projectState').textContent='已恢复 · 待连接素材';$('#projectState').className='status warn';$('#saveProject').disabled=true;$('#workspaceDetail').textContent='已恢复台词、音频绑定和演出设置。重新连接原工程目录后可读取已保存的图片和音频。';$('#recoveryBar').hidden=true;await setProject(structuredClone(recoverySnapshot.project),'自动恢复快照',{workspaceId:recoverySnapshot.workspaceId,workspaceLabel:recoverySnapshot.workspaceLabel})};
+$('#restoreRecovery').onclick=async()=>{if(!recoverySnapshot)return;clearTimeout(saveTimer);runtimeFiles.clear();workspace=null;workspaceConflict=false;$('#reloadWorkspace').hidden=true;$('#projectState').textContent='已恢复 · 待连接素材';$('#projectState').className='status warn';$('#saveProject').disabled=true;$('#workspaceDetail').textContent='已恢复台词、音频绑定和演出设置。重新连接原工程目录后可读取已保存的图片和音频。';$('#recoveryBar').hidden=true;await setProject(structuredClone(recoverySnapshot.project),'自动恢复快照',{workspaceId:recoverySnapshot.workspaceId,workspaceLabel:recoverySnapshot.workspaceLabel,workspaceRecentId:recoverySnapshot.workspaceRecentId||null});const recentId=await recoveryRecentId(recoverySnapshot);if(recentId&&recoveryConnection)await chooseWorkspace(recentId)};
+/** The desktop recent-project entry the snapshot came from: by stable id, or (older snapshots) by a unique folder name. */
+async function recoveryRecentId(snapshot){const desktop=globalThis.replayDesktop;if(!desktop?.recent||!snapshot)return null;try{const items=await desktopCall('recent');if(snapshot.workspaceRecentId&&items.some(item=>item.id===snapshot.workspaceRecentId))return snapshot.workspaceRecentId;const named=snapshot.workspaceLabel?items.filter(item=>item.label===snapshot.workspaceLabel):[];return named.length===1?named[0].id:null}catch{return null}}
 $('#reconnectRecovery').onclick=()=>chooseWorkspace();
 $('#openDifferentWorkspace').onclick=()=>chooseWorkspace(undefined,{replaceRecovered:true});
 $('#discardRecovery').onclick=async()=>{try{await recoveryStore.clear()}catch{}recoverySnapshot=null;$('#recoveryBar').hidden=true;await setProject(createProject('未命名 Replay'),'新建工程');$('#importDetails').open=true};
