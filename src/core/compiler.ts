@@ -1,3 +1,6 @@
+import { stageSlotX } from './stage-slots.js';
+/** Two characters closer than this (fraction of stage width) read as standing on top of each other. */
+const OVERLAP_DISTANCE = 0.12;
 import { normalizeStageMove } from './move-curves.js';
 import { lineMoodText, triggeredExpression } from './acting.js';
 import { estimateDuration } from './project.js';
@@ -416,6 +419,8 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
   // Once a row uses enter/exit, state.roster owns the stage (it may legitimately be empty).
   let explicitStage = false;
   let carriedTransforms: Record<string, StageTransform> = {};
+  /** Who was on stage on the last shown line, to tell staying characters from returning ones. */
+  let previousShownRoster = new Set<string>();
   let carriedCameraTransform: CameraTransform = { ...DEFAULT_CAMERA_TRANSFORM };
   let currentSceneKey = sceneKeys[0] ?? '0:0';
   const projectSceneGraph = normalizeSceneGraphSettings(project.sceneGraph);
@@ -555,6 +560,30 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       roster = frame.roster;
       positions = frame.positions;
     }
+
+    // Inherited dragged positions keep the scene's composition, but a character coming back must not
+    // land on someone else: whoever would overlap goes to their slot, or else the freest spot.
+    // Positions set on this line, slot-placed characters and those who stayed on stage keep priority.
+    if (line.type !== 'command' && roster.length > 1) {
+      const slots = roster.map(id => positions[id] ?? 'auto');
+      const slotXOf = (id: string) => { const i = roster.indexOf(id); return stageSlotX(slots[i]!, roster.length, i, slots); };
+      const xOf = (id: string) => carriedTransforms[id]?.x ?? slotXOf(id);
+      const inherited = (id: string) => !!carriedTransforms[id] && !localTransformIds.has(id);
+      const order = [...roster.filter(id => !inherited(id)), ...roster.filter(id => inherited(id) && previousShownRoster.has(id)), ...roster.filter(id => inherited(id) && !previousShownRoster.has(id))];
+      const placed: number[] = [];
+      const clear = (x: number) => placed.every(other => Math.abs(other - x) >= OVERLAP_DISTANCE);
+      for (const id of order) {
+        let x = xOf(id);
+        if (inherited(id) && !clear(x)) {
+          const candidates = [slotXOf(id), 0.22, 0.5, 0.78, 0.14, 0.86, 0.36, 0.64];
+          x = candidates.find(clear) ?? candidates.reduce((best, value) => Math.min(...placed.map(o => Math.abs(o - value))) > Math.min(...placed.map(o => Math.abs(o - best))) ? value : best);
+          carriedTransforms[id] = { ...carriedTransforms[id]!, x };
+          if (state.characterVisuals[id]?.transform) state.characterVisuals[id]!.transform = { ...carriedTransforms[id]! };
+        }
+        placed.push(x);
+      }
+    }
+    if (line.type !== 'command') previousShownRoster = new Set(roster);
 
     for (const id of roster) {
       const previous = state.characterVisuals[id];

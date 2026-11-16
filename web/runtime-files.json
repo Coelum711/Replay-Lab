@@ -25,6 +25,7 @@
     "core/project.js",
     "core/projection.js",
     "core/scene-graph.js",
+    "core/stage-slots.js",
     "core/text-tags.js",
     "core/types.js",
     "editor/batch.js",
