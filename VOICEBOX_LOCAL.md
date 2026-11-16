@@ -1,6 +1,6 @@
 # Voicebox Local integration (0.53.2-dev)
 
-0.54.2 adds an **optional, separate** MLX clone/instruct companion on port 17494.
+0.54.2 adds an **optional, separate** MLX clone/instruct companion that runs on a separate local address.
 See `VOICE_BRIDGE_CN.md`. It reads Voicebox profiles but never patches Voicebox.
 The stable path below remains unchanged. Experimental fields are NOT sent to stock `/generate`.
 
@@ -8,7 +8,7 @@ Replay Lab can optionally use a separately installed Voicebox instance as a loca
 
 ## Connection
 
-Default endpoint: `http://127.0.0.1:17493`
+Default endpoint: (local address)
 
 Replay Lab does **not** install Voicebox and does **not** download Voicebox models itself. When a generation selects an engine/model that Voicebox has not cached yet, Voicebox may download it on first use.
 
@@ -42,4 +42,4 @@ Dialogue/Voice timing and export therefore remain Replay Lab data; Voicebox is o
 
 ## Security
 
-Keep Voicebox on localhost unless you intentionally configure a trusted remote deployment. The Voicebox local API is not an authenticated public-service API, so Replay Lab defaults to `127.0.0.1`.
+Keep Voicebox on localhost unless you intentionally configure a trusted remote deployment. The Voicebox local API is not an authenticated public-service API, so Replay Lab defaults to a local address.

@@ -33,7 +33,7 @@ HF_HUB_DISABLE_XET=1 ./bridge/.venv/bin/hf download mlx-community/Qwen3-TTS-12Hz
 ```
 
 4. 启动 Voicebox，确认你要用的克隆 Profile 存在。再双击 `START_VOICE_BRIDGE.command`，保持这个终端窗口打开。
-5. 运行 `START_REPLAY_LAB.command`，进入声音页，展开“实验：本机克隆情绪桥”，点击“检查情绪桥”。默认 Voicebox 地址是 `http://127.0.0.1:17493`，桥地址是 `http://127.0.0.1:17494`。两个服务不能填同一个地址。
+5. 运行 `START_REPLAY_LAB.command`，进入声音页，展开“实验：本机克隆情绪桥”，点击“检查情绪桥”。Voicebox 和桥默认都是（本机地址），端口不同，声音页里已经填好。两个服务不能填同一个地址。
 6. 声音页需要打开/连接你的工程目录；不要假定从 Studio 新开页面就自动拿到了未保存工程。给角色选择 Voicebox 克隆 Profile，模式选“实验：克隆 + 情绪”，尺寸选 1.7B。给当前句填写表演指令，再生成试听。
 
 英文台词可先试：`Speak quietly with restrained anger. Keep the pace steady. Do not shout.` 固定 Seed（例如 42）后比较不同指令。情绪和口音只是模型条件，不保证完全遵从；声纹相似度也需要与你的原样本比对。
@@ -44,7 +44,7 @@ HF_HUB_DISABLE_XET=1 ./bridge/.venv/bin/hf download mlx-community/Qwen3-TTS-12Hz
 
 - “已连接，尚未就绪”：打开桥状态页，检查两个 1.7B 模型是否完整、是否是 Apple Silicon / arm64，以及独立依赖是否安装。就绪只表示文件/依赖预检通过，不等于真机推理已通过。
 - 自定义 HF 缓存：桥识别 `HF_HUB_CACHE`、`HUGGINGFACE_HUB_CACHE`、`HF_HOME`。如果昨天在终端设置过其中之一，从同一个终端启动 `./START_VOICE_BRIDGE.command`；Finder 双击未必继承终端变量。不要为了修路径重复下载模型。本桥默认读取标准 HF 缓存，不支持随意的 `--local-dir` 输出目录。
-- Voicebox 不在默认端口：在本包根目录运行 `./bridge/.venv/bin/python bridge/server.py --voicebox http://127.0.0.1:你的端口`，同时修改声音页 Voicebox 地址。桥会核对两端地址，避免误取另一台服务的同名 Profile ID。
+- Voicebox 不在默认端口：在本包根目录运行 `./bridge/.venv/bin/python bridge/server.py --voicebox http://（本机地址）:你的端口`，同时修改声音页 Voicebox 地址。桥会核对两端地址，避免误取另一台服务的同名 Profile ID。
 - “内部接口版本不匹配”：重新运行安装器。桥绑定 `mlx-audio` 的特定提交，并检查 Qwen 模块哈希；不猜测新版私有接口。其他 Python 依赖按兼容范围安装，尚未制作完整的 Mac 依赖锁文件。
 - Profile 报错：当前适配 Voicebox 的 `/profiles/{id}` 与 `/profiles/{id}/export` ZIP 格式；从 `samples.json` 列出的 PCM WAV 中，自动选最长的 3–60 秒样本。不处理预设 Profile，不合并多个情绪样本。已有一份干净样本通常够开始试，不必给角色补全情绪库。
 - “忙”：本桥一次只生成一句。其他窗口的请求会报忙，不自动排无限队列。
