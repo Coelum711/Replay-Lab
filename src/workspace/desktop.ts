@@ -25,11 +25,12 @@ export function desktopWritable(token:string):WritableStream{
 export class DesktopProjectWorkspace implements ProjectWorkspace{
   readonly kind='filesystem' as const;
   private fingerprint:string|null|undefined;
-  constructor(readonly id:string,readonly label:string){}
+  /** `recentId` survives restarts (the grant `id` does not), so recovery can find the folder again. */
+  constructor(readonly id:string,readonly label:string,readonly recentId:string|null=null){}
   static async choose(recentId?:string):Promise<DesktopProjectWorkspace>{
     const result=await desktopResult(desktopBridge()!.workspace({action:'choose',recentId}));
     if(!result)throw new DOMException('已取消打开','AbortError');
-    return new DesktopProjectWorkspace(result.id,result.label);
+    return new DesktopProjectWorkspace(result.id,result.label,result.recentId??null);
   }
   private call(action:string,args:Record<string,unknown>={}){return desktopResult(desktopBridge()!.workspace({action,id:this.id,...args}));}
   async write(relative:string,data:WorkspaceData):Promise<void>{await this.call('write',{relative,data:await bytes(data)});}

@@ -7,6 +7,8 @@ export interface RecoverySnapshot {
   label?: string;
   workspaceId?: string | null;
   workspaceLabel?: string | null;
+  /** Desktop recent-project id: stable across restarts, unlike `workspaceId`. */
+  workspaceRecentId?: string | null;
 }
 
 export interface ProjectRecoveryStore {

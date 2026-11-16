@@ -92,7 +92,7 @@ async function start(){
         for(const dir of WORKSPACE_DIRECTORIES)await files.mkdir(grant.id,dir);
         const previous=preferences.recent.find(r=>r.path===grant.path);
         preferences.recent=[{id:previous?.id||randomUUID(),label:grant.label,path:grant.path,updatedAt:Date.now()},...preferences.recent.filter(r=>r.path!==grant.path)].slice(0,8);
-        await savePreferences();return grant;
+        await savePreferences();return {...grant,recentId:preferences.recent[0].id};
       }
       case 'root':return files.root(id);
       case 'read':return files.read(id,relative);
