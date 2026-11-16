@@ -159,3 +159,14 @@ body.studio-shell .panel.center .stage-wrap{width:min(100%,85.333vh,924px);margi
 .character-identity select{min-width:0;max-width:100%}
 .character-identity button{white-space:normal;overflow-wrap:anywhere}
 #characterView .character-detail>.grid2:first-child{grid-template-columns:minmax(0,1fr)}
+.character-color-row{gap:6px;align-items:center;flex-wrap:wrap}
+.character-color-row input[type=color]{width:34px;height:26px;padding:0;border:1px solid rgba(255,255,255,.18);border-radius:6px;background:none;cursor:pointer}
+.color-swatch{width:18px;height:18px;min-height:0;padding:0;border-radius:50%;border:2px solid transparent;cursor:pointer}
+.color-swatch.active{border-color:#fff}
+.dialogue-skin-card{display:block}
+.dialogue-skin-card summary{cursor:pointer;font-weight:600}
+.dialogue-skin-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px 14px}
+.dialogue-skin-grid label{display:flex;flex-direction:column;gap:3px}
+.dialogue-skin-grid label.checkrow{flex-direction:row;align-items:center}
+.dialogue-skin-grid input[type=color]{width:44px;height:26px;padding:0}
+.dialogue-skin-grid label{text-align:left;align-items:stretch}

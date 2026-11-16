@@ -9,6 +9,7 @@ export const WORKSPACE_DIRECTORIES = Object.freeze([
   'assets/bgm',
   'assets/ambient',
   'assets/sfx',
+  'assets/system',
   'assets/voice/imported',
   'assets/voice/generated',
   'cache',

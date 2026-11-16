@@ -29,11 +29,31 @@ export const TEXT_TAG_NAMES = ['抖', '波', '大', '小', '跳', '彩', '红', 
 
 const TAG_PATTERN = /\{(\/?)([^{}\s]{0,12})\}/g;
 
-function tagFor(name: string) { return TAGS[name] ?? TAGS[name.toLowerCase()] ?? null; }
+/** `{色3}` / `{c3}`: text colour 3 of the window skin (RPG Maker's `\\C[3]`). */
+const PALETTE_TAG = /^(?:色|c)(\d{1,2})$/i;
+function tagFor(name: string): { kind: TextTagKind; color?: string } | null {
+  const palette = PALETTE_TAG.exec(name);
+  if (palette && Number(palette[1]) < 32) return { kind: 'color', color: `palette:${Number(palette[1])}` };
+  return TAGS[name] ?? TAGS[name.toLowerCase()] ?? null;
+}
+
+/** RPG Maker `\\C[n]` switches the colour until the next `\\C[n]`; `\\C[0]` goes back to normal. */
+function expandRpgColorCodes(source: string): string {
+  if (!/\\C\[\d{1,2}\]/i.test(source)) return source;
+  let open: string | null = null;
+  const out = source.replace(/\\C\[(\d{1,2})\]/gi, (_, digits: string) => {
+    const n = Number(digits);
+    let text = open ? `{/${open}}` : '';
+    open = n > 0 && n < 32 ? `c${n}` : null;
+    if (open) text += `{${open}}`;
+    return text;
+  });
+  return open ? `${out}{/${open}}` : out;
+}
 
 /** Plain text plus styled ranges. Unknown `{...}` stays as literal text. */
 export function parseTextTags(text: string): { plain: string; ranges: TextTagRange[] } {
-  const source = String(text ?? '');
+  const source = expandRpgColorCodes(String(text ?? ''));
   if (!source.includes('{')) return { plain: source, ranges: [] };
   const ranges: TextTagRange[] = [];
   const open: Array<{ name: string; from: number; kind: TextTagKind; color?: string }> = [];
