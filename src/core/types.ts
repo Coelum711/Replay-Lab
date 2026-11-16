@@ -1017,6 +1017,8 @@ export interface ReplaySettings {
   speechLanguage: string;
   translationProvider?: string;
   ttsProvider?: string;
+  /** Textbox skin from assets/system (images + 对话框.json). Absent = the built-in look. */
+  dialogueSkin?: import('./dialogue-skin.js').DialogueSkin | null;
 }
 
 export interface ReplayProject {

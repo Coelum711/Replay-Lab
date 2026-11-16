@@ -15,3 +15,4 @@ export * from './acting.js';
 export * from './body.js';
 export * from './body-import.js';
 export * from './filters.js';
+export * from './dialogue-skin.js';

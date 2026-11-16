@@ -19,6 +19,7 @@ import { diagnoseWorkspaceAssets } from './workspace-diagnostics.js';
 import { backupBeforeRecovery, isRecoveryWorkspace } from './recovery-workspace.js';
 import { createExportSession } from './export-session.js';
 import {desktopCall} from './desktop-client.js';
+import {renderDialogueSkinCard} from './dialogue-skin-card.js';
 import { VirtualScriptList } from './virtual-script-list.js';
 import { renderLineTakePanel, onVoiceQueueChange, voiceNotice, clearVoiceNotice } from './line-take-panel.js';
 import { CustomObjectEditorController } from './custom-object-editor-controller.js';
@@ -39,6 +40,8 @@ import {
   makeId,
   assetDirectory,
   discoverFolderAssets,
+  findDialogueSkinFiles,
+  parseDialogueLayout,
   pluginCommandList,
   listStagePlugins,
   sanitizePathPart,
@@ -329,7 +332,7 @@ async function chooseWorkspace(recentId,{replaceRecovered=false}={}){
     if(pending){clearTimeout(saveTimer);saveTimer=setTimeout(()=>void saveIfConnected(),350)}
     invalidateMediaCaches();renderAll();
     try{await refreshWorkspace()}catch(error){$('#workspaceDetail').textContent=`工程已连接，但素材列表读取失败：${error.message||error}`}
-    if(project===owner||!owner){void scanAssetFolders({quiet:true});void refreshPlugins()}
+    if(workspace===chosen){void scanAssetFolders({quiet:true});void refreshPlugins()}
     if(reconnect){
       const issues=await diagnoseWorkspaceAssets(owner.assets,chosen);
       if(project!==owner||workspace!==chosen)return;
@@ -658,6 +661,8 @@ function characterSetupCallout(character,activeFaceTemplate){
   return `<div class="character-path"><strong>脸部素材已启用</strong><div>先看舞台预览：位置看着对就不用再调。只有眼睛 / 眉毛 / 嘴没贴准时，再展开“把五官贴到脸上”。</div><span class="status ok">看着对就停</span></div>`;
 }
 
+/** Quick picks for a character's colour; the colour input covers everything else. */
+const CHARACTER_COLOR_SWATCHES=['#8b7cf0','#e05a6d','#f08a3c','#e8c547','#5bbf6a','#3fb5b0','#4a90e2','#2f4fa8','#c06bd6','#8a6a52','#6f7a8a','#d9d9d9'];
 function renderCharacters(){
   if(characterBrowser.projectId!==project.id)characterBrowser={projectId:project.id,query:'',kind:'',scrollTop:0};
   const host=$('#characterView');host.innerHTML='';
@@ -691,6 +696,7 @@ function renderCharacters(){
   const card=document.createElement('div');card.className='character character-detail';
   card.innerHTML=`
     <div class="grid2"><label class="muted">角色名<input data-name value="${escapeHtml(character.name)}"></label><label class="muted">类型<select data-kind>${['normal','npc','kp','system'].map(v=>`<option value="${v}" ${character.kind===v?'selected':''}>${characterKindLabel(v)}</option>`).join('')}</select></label></div>
+    <div class="row character-color-row" title="名字底色、对话框进度条和舞台上的名字条都用这个颜色"><span class="muted">代表色</span><input data-character-color type="color" value="${escapeHtml(/^#[0-9a-f]{6}$/i.test(character.color||'')?character.color:'#8b7cf0')}">${CHARACTER_COLOR_SWATCHES.map(c=>`<button type="button" class="color-swatch${(character.color||'').toLowerCase()===c?' active':''}" data-character-swatch="${c}" style="background:${c}" aria-label="代表色 ${c}"></button>`).join('')}</div>
     ${characterSetupCallout(character,activeFaceTemplate)}
     <details><summary>身份 / 导入别名 <span class="summary-meta">${(character.aliases||[]).length?`${character.aliases.length} 个`:'可选'}</span></summary><div class="disclosure-body"><label class="muted">别名 / 导入名<input data-aliases value="${escapeHtml((character.aliases||[]).join(', '))}" placeholder="例如 Matthew, 马修"></label><div class="muted">只用于识别同一角色的不同导入名；不会改显示名称，也不会自动翻译角色名。</div></div></details>
     <details><summary>声音 / AI 朗读（可选） <span class="summary-meta" data-character-speech-summary></span></summary><div class="stack disclosure-body"><div class="grid2"><label class="muted">默认朗读语言<input data-character-language list="studioLanguageOptions" value="${escapeHtml(character.speech?.defaultLanguage||'')}" placeholder="留空 = 工程朗读语言"></label><label class="muted">停顿强度 <span data-character-pause-value class="summary-meta"></span><input data-character-pause type="range" min="0" max="3" step="0.1" value="${Number(character.speech?.pauseScale??project.settings.speechPauseScale??1).toFixed(1)}"></label></div><div class="grid2"><label class="muted">口音 / 地区<input data-character-accent value="" placeholder="例如 London / Cockney / Texas / 伦敦"></label><label class="muted">口音强度<select data-character-accent-strength><option value="off">关闭</option><option value="light">轻微</option><option value="natural">自然</option><option value="strong">明显</option></select></label></div><div data-character-accent-results class="stack"></div><div data-character-accent-current class="compact-note"></div><div class="row"><button type="button" data-character-pause-reset class="small">停顿继承全局</button><button type="button" data-character-open-voice class="small">打开声音工作台 / 选 Voice</button></div><div class="muted">常用设置直接放在角色页；完整 Voice 试听、批量生成和高级口音规则在声音工作台。</div></div></details>
@@ -713,6 +719,11 @@ function renderCharacters(){
   card.querySelector('[data-aliases]').onchange=e=>{const seen=new Set(),aliases=[];for(const raw of e.target.value.split(/[,，;；\n]+/)){const value=raw.trim(),key=normalizeCharacterNameKey(value);if(!value||!key||key===normalizeCharacterNameKey(character.name)||seen.has(key))continue;seen.add(key);aliases.push(value)}character.aliases=aliases;scheduleSave('修改角色导入别名',`character-aliases:${character.id}`);renderAll()};
   character.speech??={defaultLanguage:null,voices:{},accents:{}};character.speech.voices??={};character.speech.accents??={};
   new CharacterSpeechController({project,escapeHtml,searchAccents,getAccentProfile,normalizeNameKey:normalizeCharacterNameKey,scheduleSave,openVoice:openVoiceWorkbench,setStatus:message=>{$('#importStatus').textContent=message},hasWorkspace:()=>!!workspace}).mount(card,character);
+  {const input=card.querySelector('[data-character-color]'),dot=()=>picker.querySelector(`[data-character-id="${CSS.escape(character.id)}"] .character-chip-dot`);
+   const preview=value=>{character.color=value;const d=dot();if(d)d.style.background=value;compile()};
+   const commit=value=>{character.color=value;scheduleSave('修改角色代表色',`character-color:${character.id}`);renderAll()};
+   input.oninput=e=>preview(e.target.value);input.onchange=e=>commit(e.target.value);
+   for(const swatch of card.querySelectorAll('[data-character-swatch]'))swatch.onclick=()=>commit(swatch.dataset.characterSwatch)}
   card.querySelector('[data-kind]').onchange=e=>{character.kind=e.target.value;scheduleSave('修改角色类型',`character-kind:${character.id}`);renderAll()};
   {const box=card.querySelector('[data-expr-triggers]'),states=characterExpressionNames(character).filter(n=>n!=='default');
    if(states.length){const title=document.createElement('small');title.className='muted';title.textContent='情绪自动换立绘：台词的情绪标记或语气里出现这些词时，这一句自动用对应立绘（空格分隔）';box.append(title);
@@ -1115,7 +1126,8 @@ function renderAnimationPane(){
     jumpToSource(index){if(index<0)return;selectedIndex=index;renderAll();scrollActiveLineIntoView()},
     openSound(target){const line=project.lines[target];if(line)soundPicker.open(line,{lineNumber:target+1})}});
 }
-function renderStageQuickControls(){
+function renderDialogueSkinPane(){renderDialogueSkinCard($('#dialogueSkinCard'),{project,workspace,onPreview:()=>compile(),onCommit:label=>{scheduleSave(label,'dialogue-skin');renderAll()},setStatus:text=>{$('#importStatus').textContent=text}})}
+function renderStageQuickControls(){renderDialogueSkinPane();
   const line=currentLine(),perf=currentPerf();$('#stageQuickControls').hidden=!line||line.type==='command';
   const names=(perf?.stage||[]).map(actor=>project.characters.find(c=>c.id===actor.characterId)?.name).filter(Boolean);
   $('#stageQuickRoster').textContent=names.length?`当前 ${names.length} 人：${names.join('、')}`:'当前无人上镜';
@@ -1296,12 +1308,30 @@ async function scanAssetFolders({quiet=false}={}){
   const found=discoverFolderAssets(owner,files);
   for(const asset of found){if(mediaKinds().has(asset.kind)){try{const blob=await ws.read(asset.sourcePath);const duration=await probeDuration(new File([blob],asset.name,{type:asset.mime}));if(duration)asset.metadata.duration=duration}catch{}}}
   if(project!==owner||workspace!==ws)return 0;
-  if(found.length){owner.assets.push(...found);scheduleSave('发现文件夹里的新素材','asset-scan');await saveIfConnected();invalidateMediaCaches();renderAll()}
-  const byKind=found.reduce((m,a)=>(m[a.kind]=(m[a.kind]||0)+1,m),{});const label={sfx:'音效',bgm:'BGM',ambient:'环境声',character:'立绘',background:'背景',cg:'CG',voice:'语音'};
+  if(found.length)owner.assets.push(...found);
+  const skin=await refreshDialogueSkin(owner,ws,files);
+  if(project!==owner||workspace!==ws)return 0;
+  if(found.length||skin.changed){scheduleSave(skin.changed&&!found.length?'更新对话框皮肤':'发现文件夹里的新素材','asset-scan');await saveIfConnected();invalidateMediaCaches();renderAll()}
+  if(skin.warnings.length)$('#importStatus').textContent=`对话框皮肤：${skin.warnings.join('；')}`;
+  else if(skin.changed&&!found.length&&quiet)$('#importStatus').textContent=owner.settings.dialogueSkin?'对话框皮肤已从 assets/system 更新。':'assets/system 里没有皮肤文件了，对话框恢复默认样式。';
+  const byKind=found.reduce((m,a)=>(m[a.kind]=(m[a.kind]||0)+1,m),{});const label={sfx:'音效',bgm:'BGM',ambient:'环境声',character:'立绘',background:'背景',cg:'CG',voice:'语音',other:'系统图片'};
   if(found.length||!quiet)$('#importStatus').textContent=found.length?`从素材文件夹发现 ${found.length} 个新素材：${Object.entries(byKind).map(([k,n])=>`${label[k]||k} ${n}`).join('、')}`:'素材文件夹里没有新文件。';
   return found.length;
 }
 $('#scanAssetFolders').onclick=()=>void scanAssetFolders();
+// Swap a file in assets/system (or 对话框.json) in Finder, come back, and the textbox follows.
+window.addEventListener('focus',()=>{if(workspace&&!workspaceConnecting)void scanAssetFolders({quiet:true})});
+/** Rebuilds settings.dialogueSkin from assets/system; skin images are stored by asset id so exports can move them. */
+async function refreshDialogueSkin(owner,ws,files){
+  const found=findDialogueSkinFiles(files);let layout={},warnings=[];
+  if(found.layoutPath){try{({layout,warnings}=parseDialogueLayout(await (await ws.read(found.layoutPath)).text()))}catch(error){warnings=[`读取 ${found.layoutPath} 失败：${error.message||error}`]}}
+  const idFor=path=>path?owner.assets.find(a=>a.sourcePath===path)?.id||null:null;
+  const box=idFor(found.box),name=idFor(found.name),window=idFor(found.window);
+  const next=box||name||window||Object.keys(layout).length?{box,name,window,layout,revision:found.revision}:null;
+  const changed=JSON.stringify(owner.settings.dialogueSkin??null)!==JSON.stringify(next);
+  if(changed)owner.settings.dialogueSkin=next;
+  return {changed,warnings};
+}
 /** Asks before running any project plugin; the user sees each file's name, size and description. */
 function confirmPlugins(pending){return new Promise(resolve=>{
   const overlay=document.createElement('div');overlay.style.cssText='position:fixed;inset:0;background:rgba(6,6,12,.6);display:flex;align-items:center;justify-content:center;z-index:9999';

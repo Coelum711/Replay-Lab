@@ -30,6 +30,8 @@ import type {
   WheelStep
 } from '../core/types.js';
 import { replayEase } from './easing.js';
+import { dialogueSkinActive, resolveDialogueLayout, type DialogueSkin } from '../core/dialogue-skin.js';
+import { drawNineSlice, drawTintedNineSlice, drawRpgWindow, rpgTextColor, looksLikeRpgWindowSkin } from './window-skin.js';
 import { evaluateRplGenMotion } from './rplgen-motion.js';
 import { evaluatePuppet, linePuppetOverridesAt, normalizePuppetRig, type PuppetPartState } from '../puppet/rig.js';
 import { projectFaceFeature } from '../core/face.js';
@@ -1431,7 +1433,7 @@ export class CanvasStageRenderer {
   private drawFittedText(displayText: string, fullText: string, x: number, y: number, maxWidth: number, maxHeight: number, baseSize: number, minSize: number, ratio: number, align: CanvasTextAlign, weight = ''): void {
     let size = baseSize, fullLines = 0;
     for (;; size -= 1) {
-      this.ctx.font = `${weight} ${size}px system-ui`.trim();
+      this.ctx.font = `${weight} ${size}px ${this.textFamily}`.trim();
       fullLines = wrapTextLines(this.ctx, fullText, maxWidth).length;
       if (fullLines * size * ratio <= maxHeight || size <= minSize) break;
     }
@@ -1446,7 +1448,7 @@ export class CanvasStageRenderer {
   private drawTagged(line: PerformanceLine, displayText: string, localTime: number, x: number, y: number, maxWidth: number, maxHeight: number, baseSize: number, minSize: number, ratio: number, align: 'left' | 'center', weight: string): void {
     const total = Array.from(line.text).length, shown = Array.from(displayText).length;
     const revealSeconds = Math.max(0.05, Math.min(line.duration, line.textEffectDuration || line.duration));
-    drawTaggedText(this.ctx, { fullText: line.text, shownCount: shown, ranges: line.textTags ?? [], x, y, maxWidth, maxHeight, baseSize, minSize, ratio, align, weight, time: localTime,
+    drawTaggedText(this.ctx, { fullText: line.text, shownCount: shown, ranges: line.textTags ?? [], x, y, maxWidth, maxHeight, baseSize, minSize, ratio, align, weight, time: localTime, family: this.textFamily, palette: this.textPalette ?? undefined,
       revealTimes: i => line.textEffect === 'all' ? 0 : (i / Math.max(1, total)) * revealSeconds / (line.textEffect === 'run' ? 1.35 : 1) });
   }
 
@@ -1471,6 +1473,61 @@ export class CanvasStageRenderer {
     this.drawSceneBanner(line, localTime);
   }
 
+  /** Font family for dialogue text; a skin may set its own. */
+  private textFamily = 'system-ui';
+  /** Text colours from the active Window.png, for `\\C[n]` / `{色n}`. */
+  private textPalette: ((index: number) => string) | null = null;
+
+  /** Textbox drawn from the project's skin (assets/system images and 对话框.json). */
+  private async drawSkinnedDialogue(line: PerformanceLine, displayText: string, progress: number, localTime: number, skin: DialogueSkin): Promise<void> {
+    const { width, height } = this.canvas, k = width / 1280, L = resolveDialogueLayout(skin), ctx = this.ctx;
+    const speaker = this.character(line.speakerId), accent = speaker?.color || '#8b7cf0';
+    const narration = line.type === 'system' || line.type === 'narration';
+    const [boxImg, nameImg, rawWindow] = await Promise.all([this.image(skin.box), this.image(skin.name), skin.box ? null : this.image(skin.window)]);
+    const winImg = rawWindow && looksLikeRpgWindowSkin(rawWindow) ? rawWindow : null;
+    let x: number, y: number, w: number, h: number;
+    if (narration) { x = width * 0.16; y = height * 0.34; w = width * 0.68; h = height * 0.26; }
+    else { x = L.marginX * k; w = width - x * 2; h = L.height * k; y = height - h - L.bottom * k; }
+    const explicit = skin.layout ?? {};
+    let textColor = L.textColor, nameColor = L.nameColor;
+    if (winImg) { if (!explicit.textColor) textColor = rpgTextColor(winImg, 0); if (!explicit.nameColor) nameColor = textColor; }
+    const family = L.fontFamily ? `"${L.fontFamily.replace(/"/g, '')}", system-ui` : 'system-ui';
+    ctx.save();
+    ctx.globalAlpha *= L.opacity;
+    if (boxImg) drawNineSlice(ctx, boxImg, 0, 0, boxImg.naturalWidth, boxImg.naturalHeight, L.slice, x, y, w, h, k);
+    else if (winImg) drawRpgWindow(ctx, winImg, x, y, w, h, k);
+    else {
+      ctx.fillStyle = hexAlpha(L.boxColor, L.boxAlpha); roundRect(ctx, x, y, w, h, L.radius * k); ctx.fill();
+      ctx.strokeStyle = hexAlpha(L.borderColor, L.borderAlpha); ctx.lineWidth = 1.5 * k; ctx.stroke();
+    }
+    if (!narration && L.showName) {
+      const name = speaker?.name || line.speakerName;
+      ctx.font = `700 ${Math.round(L.nameFontSize * k)}px ${family}`;
+      const nw = Math.max(L.nameMinWidth * k, ctx.measureText(name).width + L.namePadX * k * 2), nh = L.nameHeight * k;
+      const nx = x + L.nameX * k, ny = y + L.nameY * k;
+      if (nameImg) drawTintedNineSlice(ctx, nameImg, L.nameSlice, nx, ny, nw, nh, k, L.nameTint ? accent : null);
+      else if (winImg) drawRpgWindow(ctx, winImg, nx, ny, nw, nh, k);
+      else { ctx.fillStyle = L.nameTint ? accent : hexAlpha(L.boxColor, Math.max(L.boxAlpha, 0.9)); roundRect(ctx, nx, ny, nw, nh, 9 * k); ctx.fill(); }
+      ctx.fillStyle = nameColor; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(name, nx + L.namePadX * k, ny + nh / 2);
+    }
+    this.textFamily = family;
+    this.textPalette = winImg ? (n: number) => rpgTextColor(winImg, n) : null;
+    ctx.fillStyle = textColor; ctx.textBaseline = 'top';
+    const size = Math.round(L.fontSize * k), min = Math.max(8, Math.round(size * 15 / 23));
+    const tx = narration ? width / 2 : x + L.padX * k, ty = narration ? y + h * 0.22 : y + L.padTop * k;
+    const tw = narration ? w * 0.82 : w - L.padX * k * 2, th = narration ? h * 0.72 : h - (L.padTop + L.padBottom) * k;
+    const align = narration ? 'center' : 'left';
+    try {
+      if (line.textTags?.length) this.drawTagged(line, displayText, localTime, tx, ty, tw, th, size, min, L.lineHeight, align, narration ? '' : '500');
+      else this.drawFittedText(displayText, line.text, tx, ty, tw, th, size, min, L.lineHeight, align, narration ? '' : '500');
+    } finally { this.textFamily = 'system-ui'; this.textPalette = null; }
+    if (!narration && L.progress) {
+      ctx.fillStyle = 'rgba(255,255,255,.12)'; roundRect(ctx, x + 20 * k, y + h - 14 * k, w - 40 * k, 4 * k, 2 * k); ctx.fill();
+      ctx.fillStyle = accent; roundRect(ctx, x + 20 * k, y + h - 14 * k, (w - 40 * k) * clamp(progress, 0, 1), 4 * k, 2 * k); ctx.fill();
+    }
+    ctx.restore();
+  }
+
   private async drawDialogue(line: PerformanceLine, progress: number, localTime: number): Promise<void> {
     if (line.type === 'command') return;
     const displayText = revealText(line, localTime);
@@ -1480,6 +1537,8 @@ export class CanvasStageRenderer {
     if (line.type === 'wheel' && line.wheel) { this.drawWheelEvent(line, localTime); return; }
     if (line.type === 'hitpoint' && line.hitPoint) { this.drawHitPoint(line, localTime); return; }
     if (line.type === 'dice' && line.diceRolls.length) { this.drawStructuredDice(line, localTime); return; }
+    const skin = this.performance.settings.dialogueSkin;
+    if (line.type !== 'dice' && dialogueSkinActive(skin)) { await this.drawSkinnedDialogue(line, displayText, progress, localTime, skin!); return; }
     if (line.type === 'system' || line.type === 'narration') {
       const x = width * 0.16, y = height * 0.34, w = width * 0.68, h = height * 0.26;
       this.ctx.fillStyle = 'rgba(10,12,17,.84)'; roundRect(this.ctx, x, y, w, h, 18); this.ctx.fill();
@@ -1818,4 +1877,11 @@ export class CanvasStageRenderer {
     await this.renderLine(located.index, located.localTime);
     return { index: located.index, localTime: located.localTime };
   }
+}
+
+/** `#rrggbb` + alpha → rgba(). */
+function hexAlpha(hex: string, alpha: number): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex); if (!m) return hex;
+  const n = parseInt(m[1]!, 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${Math.max(0, Math.min(1, alpha))})`;
 }
