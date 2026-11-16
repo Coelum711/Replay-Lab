@@ -1,6 +1,7 @@
 import { WorkerReplayLabFreeTtsProvider } from './worker-tts-provider.js';
 import {serviceFetch} from './desktop-client.js';
 import {createProsodyEditor} from './prosody-editor.js';
+import {referenceAudio,withTemporaryReference} from './reference-take.js';
 import {createTranslationBridge} from './translation-bridge-controller.js';
 import {createVoiceReview} from './voice-review-controller.js';
 import {
@@ -31,7 +32,8 @@ import {
   persistGeneratedSpeech,
   archiveActiveTake,
   activateVoiceTake,
-  listVoiceTakes
+  listVoiceTakes,
+  prosodyIsFlat
 } from '../dist/index.js';
 
 const KOKORO_BROWSER_MODULE = 'https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm';
@@ -1402,6 +1404,7 @@ prosodyEditor=createProsodyEditor({
     const policy=resolveSpeechPolicy(project,line),asset=project.assets.find(a=>a.id===line.audioAssetId);
     return {project,line,fingerprint:speechInputFingerprint(project,line)+connectionFingerprint(),sourceRevision:asset?.metadata?.contentRevision,
       canReenact:policy.ttsProvider===VOICEBOX_LOCAL_TTS_ID&&policy.voice.mode==='experimental-clone-instruct'&&policy.voice.modelSize==='1.7B',
+      canReference:policy.ttsProvider===VOICEBOX_LOCAL_TTS_ID,
       spokenText:resolveCachedSpeech(project,line).text};
   },
   audio:currentLineAudioBlob,assetAudio:audioBlobForAsset,
@@ -1414,6 +1417,20 @@ prosodyEditor=createProsodyEditor({
     try{return await prepareLineSpeech(context.owner,line,{prosodyReenactment:curve,signal,
       translations:buildTranslationRegistry(),tts:ttsRegistry,translate:true,synthesize:true,
       assertCurrent(){context.assertCurrent();assertCurrent();signal.throwIfAborted();}});
+    }finally{endVoiceJob();}
+  },
+  async generateFromReference(line,{blob,curve,curveApplied},assertCurrent,signal){
+    if(activeVoiceJobs)throw new Error('已有声音任务在运行。');
+    const context=captureContext(line);beginVoiceJob();
+    try{
+      const policy=resolveSpeechPolicy(context.owner,line),character=context.owner.characters.find(c=>c.id===line.speakerId);
+      const number=context.owner.lines.findIndex(x=>x.id===line.id)+1;let leftover=null;
+      const audio=await referenceAudio(blob,curve,{curveApplied,flat:prosodyIsFlat(curve),signal});
+      const check=()=>{context.assertCurrent();assertCurrent();signal.throwIfAborted();};check();
+      const prepared=await withTemporaryReference({audio,text:resolveCachedSpeech(context.owner,line).text,name:`${character?.name||'角色'}·临时参考·第${number}行`,
+        language:policy.targetLanguage,baseUrl:$('#voiceboxEndpoint').value.trim()||'http://127.0.0.1:17493',fetchImpl:serviceFetch,signal,onLeftover:name=>{leftover=name;}},
+        voiceId=>prepareLineSpeech(context.owner,line,{referenceVoiceId:voiceId,signal,translations:buildTranslationRegistry(),tts:ttsRegistry,translate:true,synthesize:true,assertCurrent:check}));
+      return {prepared,leftover};
     }finally{endVoiceJob();}
   },
   async adopt(line,take){

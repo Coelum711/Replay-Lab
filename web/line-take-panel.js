@@ -18,6 +18,7 @@ import {
 } from '../dist/index.js';
 import { serviceFetch } from './desktop-client.js';
 import { decodeRecording, fineTuneRecording } from './prosody-audio.js';
+import { referenceAudio, toReferenceWav, withTemporaryReference } from './reference-take.js';
 
 const endpoint = (key, fallback) => { try { return localStorage.getItem(`replaylab.${key}`) || fallback; } catch { return fallback; } };
 const registry = () => new TtsRegistry().register(new VoiceboxLocalTtsProvider({
@@ -47,8 +48,8 @@ async function pump() {
   emit();
   job.onChanged(false);
   try {
-    await job.run();
-    messages.set(job.line.id, { text: '已生成新版本，旧版本已存档', kind: 'ok' });
+    const notice = await job.run();
+    messages.set(job.line.id, notice ?? { text: '已生成新版本，旧版本已存档', kind: 'ok' });
     notices.set(job.line.id, 'ok');
   } catch (error) {
     messages.set(job.line.id, { text: `生成失败：${error?.message || error}`, kind: 'error' });
@@ -68,27 +69,6 @@ async function voiceboxJson(path, options) {
   const response = await serviceFetch(`${voiceboxUrl()}${path}`, options);
   if (!response.ok) throw new Error(`Voicebox 返回 HTTP ${response.status}`);
   return response.json();
-}
-
-/** Bridge samples must be 3–60 s PCM WAV, and long references made a voice stop early, so keep 30 s at most. */
-async function toReferenceWav(file, minSeconds = 3) {
-  const context = new AudioContext({ sampleRate: 24000 });
-  try {
-    const decoded = await context.decodeAudioData(await file.arrayBuffer());
-    if (decoded.duration < minSeconds) throw new Error(`录音太短，至少需要 ${minSeconds} 秒。`);
-    const frames = Math.min(decoded.length, 30 * 24000), pcm = new Int16Array(frames);
-    for (let i = 0; i < frames; i += 1) {
-      let mixed = 0;
-      for (let channel = 0; channel < decoded.numberOfChannels; channel += 1) mixed += decoded.getChannelData(channel)[i];
-      pcm[i] = Math.max(-1, Math.min(1, mixed / decoded.numberOfChannels)) * 32767;
-    }
-    const buffer = new ArrayBuffer(44 + pcm.byteLength), view = new DataView(buffer);
-    const text = (at, value) => [...value].forEach((char, index) => view.setUint8(at + index, char.charCodeAt(0)));
-    text(0, 'RIFF'); view.setUint32(4, 36 + pcm.byteLength, true); text(8, 'WAVEfmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
-    view.setUint32(24, 24000, true); view.setUint32(28, 48000, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true); text(36, 'data'); view.setUint32(40, pcm.byteLength, true);
-    new Int16Array(buffer, 44).set(pcm);
-    return new File([buffer], 'reference.wav', { type: 'audio/wav' });
-  } finally { void context.close(); }
 }
 
 async function createVoiceFromFile(file, name) {
@@ -280,8 +260,10 @@ export function renderLineTakePanel(host, { project, line, workspace, resolveAss
       try {
         const prepared = await produce();
         if (!prepared?.ttsResult) throw new Error('这句没有可生成的语音，可能绑定了手工音频。');
-        await persistGeneratedSpeech(workspace, project, line, prepared);
+        const { notice, ...speech } = prepared;
+        await persistGeneratedSpeech(workspace, project, line, speech);
         clearAudio(line.audioAssetId);
+        return notice;
       } catch (error) {
         if (archived && !known.has(archived.id)) project.assets.splice(project.assets.indexOf(archived), 1);
         throw error;
@@ -485,7 +467,7 @@ function renderSegmentEditor(card, { element, line, show, onEdit, rerender }) {
 }
 
 /** Nine-point pitch envelope. Local fine-tune keeps the take and only bends pitch; re-record asks the bridge to follow it. */
-function renderPitchCurve(card, { element, project, line, show, onEdit, busy, enqueue, resolveAsset, active, rerender }) {
+function renderPitchCurve(card, { element, project, line, character, show, onEdit, busy, enqueue, resolveAsset, active, rerender }) {
   const details = element('details');
   details.dataset.pitchCurve = '1';
   const stored = line.speech?.prosodyCurve;
@@ -545,8 +527,29 @@ function renderPitchCurve(card, { element, project, line, show, onEdit, busy, en
       return { ...prepared, audioEdit: undefined };
     });
   };
-  actions.append(reset, fine, redo);
-  box.append(actions);
+  const fromTake = element('button', { className: 'small', textContent: '参考当前版本重录', disabled: busy || !active });
+  fromTake.dataset.pitchFromTake = '1';
+  fromTake.title = '照着当前这一版的语气重新念一遍：曲线不是平的就先在本地按曲线弯好音高，再用「普通克隆」模仿它。Voicebox 里会临时多一个声音，念完自动删除。';
+  fromTake.onclick = () => {
+    const policy = resolveSpeechPolicy(project, line);
+    if (policy.ttsProvider !== 'voicebox-local') { show('参考重录需要这个角色用 Voicebox 配音', 'error'); return; }
+    const target = normalizeProsodyCurve(line.speech?.prosodyCurve);
+    const number = project.lines.indexOf(line) + 1;
+    enqueue(async () => {
+      let notice;
+      const source = await resolveAsset(line.audioAssetId);
+      const blob = typeof source === 'string' ? await (await fetch(source)).blob() : source;
+      const audio = await referenceAudio(blob, target, { flat: prosodyIsFlat(target) });
+      const prepared = await withTemporaryReference({
+        audio, text: resolveCachedSpeech(project, line).text, name: `${character?.name || '角色'}·临时参考·第${number}行`,
+        language: policy.targetLanguage, baseUrl: voiceboxUrl(), fetchImpl: serviceFetch,
+        onLeftover: name => { notice = { text: `已生成新版本，但 Voicebox 里的临时声音「${name}」没删掉，可以手动删除`, kind: 'warn' }; }
+      }, voiceId => prepareLineSpeech(project, line, { tts: registry(), translate: false, synthesize: true, referenceVoiceId: voiceId }));
+      return { ...prepared, audioEdit: undefined, notice };
+    });
+  };
+  actions.append(reset, fine, redo, fromTake);
+  box.append(actions, element('small', { className: 'muted', textContent: '「参考当前版本重录」保留这一版的语气只改语调，普通 Voicebox 也能用；「按曲线重录」从头念，只有情绪桥能用。' }));
   details.append(box);
   card.append(details);
 }
