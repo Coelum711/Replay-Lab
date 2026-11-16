@@ -35,11 +35,12 @@ export function createProsodyEditor(api){
     for(const id of ['prosodyLoad','prosodySource','prosodyReset','prosodyPosition','prosodyAmount','prosodyTake'])$('#'+id).disabled=locked||!c;
     $('#prosodyFineTune').disabled=locked||!active?.base;
     $('#prosodyReenact').disabled=locked||!c?.canReenact;
+    $('#prosodyReenactRef').disabled=locked||!c?.canReference||!active?.base||!take;
     $('#prosodyAdopt').disabled=locked||!take;
     $('#prosodyDownload').disabled=locked||!take;
     $('#prosodyDelete').disabled=locked||!take||take===active?.base;
     $('#prosodyCancel').hidden=!busy;$('#prosodyCancel').disabled=!busy||!cancellable;
-    $('#prosodyModeHint').textContent=c?.canReenact?'实验情绪已接通：按曲线重录会近似遵循指令。':'本地微调可用；按曲线重录需要角色开启「实验：克隆 + 情绪」及 1.7B。';
+    $('#prosodyModeHint').textContent=(c?.canReenact?'实验情绪已接通：按曲线重录会近似遵循指令。':'本地微调可用；按曲线重录需要角色开启「实验：克隆 + 情绪」及 1.7B。')+(c?.canReference?'参考所选版本重录用普通克隆，保留所选版本的语气。':'');
   }
   function refresh(){const c=api.context();root.hidden=!c;if(!c){if(owner)cleanup();owner=null;return;}const session=getSession(c);if(active!==session){audio.pause();audio.removeAttribute('src');audio.hidden=true;active=session;message('载入当前录音后可试听微调；曲线重录也可直接使用。');}
     if(!c.line.speech?.prosodyCurve){selection=4;}
@@ -73,6 +74,12 @@ export function createProsodyEditor(api){
   svg.addEventListener('keydown',e=>{if(busy||!e.target.hasAttribute('data-point'))return;selection=Number(e.target.getAttribute('data-point'));const curve=pointCurve();if(['ArrowUp','ArrowDown','Home'].includes(e.key)){e.preventDefault();curve[selection].semitones=e.key==='Home'?0:Math.max(-4,Math.min(4,curve[selection].semitones+(e.key==='ArrowUp'?.1:-.1)));curveChanged(curve);svg.querySelector(`[data-point="${selection}"]`)?.focus();}});
   $('#prosodyFineTune').addEventListener('click',()=>run(async signal=>{const guard=capture();if(active.key!==contextKey(guard.c))throw new Error('原录音或设置已改变，请点击「载入当前录音」刷新。');if(active.takes.length>=12)throw new Error('本句已有 12 个试听版本，请先下载并删除不需要的候选。');const curve=pointCurve();message('正在本地处理音高…');const blob=await (api.fineTune||fineTuneRecording)(active.base.blob,active.decoded,curve,{signal});guard.assert();addTake({blob,label:prosodyIsFlat(curve)?'平线 · 原录音副本':`微调 ${active.takes.length}`,curve,fingerprint:guard.c.fingerprint,duration:active.decoded.duration,inputAssetId:active.base.inputAssetId,kind:'pitch-curve'});message('微调已就绪。试听后点击「采用所选版本」才会更换工程音频。');await audio.play().catch(()=>{});}));
   $('#prosodyReenact').addEventListener('click',()=>run(async signal=>{const guard=capture(),curve=pointCurve();if(active.takes.length>=12)throw new Error('本句已有 12 个试听版本，请先下载并删除不需要的候选。');message('正在请求实验情绪桥重录…');const prepared=await api.generate(guard.c.line,curve,guard.assert,signal);signal.throwIfAborted();guard.assert();const blob=prepared.ttsResult.audio instanceof Blob?prepared.ttsResult.audio:new Blob([prepared.ttsResult.audio],{type:prepared.ttsResult.mime});addTake({blob,label:`曲线重录 ${active.takes.length+1}`,curve,fingerprint:guard.c.fingerprint,prepared,duration:prepared.ttsResult.duration,kind:'curve-instruct'});message('重录候选已就绪；模型近似遵循曲线，请试听比较。');await audio.play().catch(()=>{});}));
+  $('#prosodyReenactRef').addEventListener('click',()=>run(async signal=>{const guard=capture(),curve=pointCurve(),take=active.takes.find(t=>t.id===active.selected);if(!take)throw new Error('先载入录音并选一个试听版本。');if(active.takes.length>=12)throw new Error('本句已有 12 个试听版本，请先下载并删除不需要的候选。');
+    const bent=take.kind==='pitch-curve'||take.kind==='curve-reference';message(bent||prosodyIsFlat(curve)?'正在照着所选版本重录…':'正在按曲线弯好所选版本，再照着它重录…');
+    const result=await api.generateFromReference(guard.c.line,{blob:take.blob,curve,curveApplied:bent},guard.assert,signal);signal.throwIfAborted();guard.assert();const prepared=result.prepared;
+    const blob=prepared.ttsResult.audio instanceof Blob?prepared.ttsResult.audio:new Blob([prepared.ttsResult.audio],{type:prepared.ttsResult.mime});
+    addTake({blob,label:`参考重录 ${active.takes.length+1}`,curve:bent?take.curve:curve,fingerprint:guard.c.fingerprint,prepared,duration:prepared.ttsResult.duration,kind:'curve-reference'});
+    message(result.leftover?`重录候选已就绪，但 Voicebox 里的临时声音「${result.leftover}」没删掉，可以手动删除。`:'重录候选已就绪：照着所选版本的语气念的，请试听比较。');await audio.play().catch(()=>{});}));
   $('#prosodyTake').addEventListener('change',e=>selectTake(e.target.value));
   $('#prosodyAdopt').addEventListener('click',()=>run(async()=>{const guard=capture(),take=active.takes.find(t=>t.id===active.selected);if(!take)return;if(take.fingerprint!==guard.c.fingerprint)throw new Error('声音或台词设置已改变，这个候选仍可试听和下载；请按当前设置重新生成。');await api.adopt(guard.c.line,take);active.key='';message('已采用所选版本。原素材保留在工程中；继续微调请重新载入当前录音。');},false));
   $('#prosodyDownload').addEventListener('click',()=>run(async()=>{const take=active.takes.find(t=>t.id===active.selected);if(take)await api.download(take.blob,`voice-${take.kind||'original'}-${take.id}.${take.blob.type.includes('mpeg')?'mp3':take.blob.type.includes('ogg')?'ogg':take.blob.type.includes('webm')?'webm':take.blob.type.includes('mp4')?'m4a':take.blob.type.includes('flac')?'flac':'wav'}`);}));

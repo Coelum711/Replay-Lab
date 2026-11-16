@@ -95,7 +95,7 @@
         <div class="prosody-axis"><span>句首</span><span>↓ 降低音调</span><span>句尾</span></div>
         <small class="muted">灰色波形为载入的来源录音，橙线为所选试听版本的播放进度。</small>
         <div class="row"><label>控制点<select id="prosodyPosition"></select></label><label class="prosody-slider">音高调整<input id="prosodyAmount" type="range" min="-4" max="4" step="0.1" value="0"></label><output id="prosodyValue">0.0 半音</output></div>
-        <div class="row"><button id="prosodyFineTune" class="primary">试听微调 · 本地</button><button id="prosodyReenact">按曲线重录 · 实验情绪</button><button id="prosodyCancel" hidden>取消等待</button></div>
+        <div class="row"><button id="prosodyFineTune" class="primary">试听微调 · 本地</button><button id="prosodyReenact">按曲线重录 · 实验情绪</button><button id="prosodyReenactRef" title="照着所选试听版本的语气重新念：所选的是原录音且曲线不是平的，会先在本地按曲线弯好音高，再用普通克隆模仿。Voicebox 里会临时多一个声音，念完自动删除。">参考所选版本重录</button><button id="prosodyCancel" hidden>取消等待</button></div>
         <small id="prosodyModeHint" class="muted"></small>
         <small class="muted">微调从载入的原录音重新计算，保留总时长。较大调整可能改变音色；首尾 25 毫秒逐渐保留原声。横轴为录音时间比例，字词位置仅供参考。</small>
         <details><summary>查看重录表演提示</summary><p id="prosodyPrompt" class="prosody-prompt"></p></details>
