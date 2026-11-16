@@ -170,3 +170,11 @@ body.studio-shell .panel.center .stage-wrap{width:min(100%,85.333vh,924px);margi
 .dialogue-skin-grid label.checkrow{flex-direction:row;align-items:center}
 .dialogue-skin-grid input[type=color]{width:44px;height:26px;padding:0}
 .dialogue-skin-grid label{text-align:left;align-items:stretch}
+.stage-move-card{display:block}
+.stage-move-card summary{cursor:pointer;font-weight:600}
+.move-mode-row button.active,.move-curve-presets button.active{background:#5b4bb0;color:#fff;border-color:#8b7cf0}
+.move-curve-presets{flex-wrap:wrap;gap:6px}
+.move-curve-row{align-items:flex-start;gap:12px;flex-wrap:wrap}
+.move-curve-canvas{background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.1);border-radius:8px;cursor:crosshair;touch-action:none}
+.move-curve-note{max-width:260px}
+.stage-move-card .grid2 label{display:grid;grid-template-columns:auto 3.5em 1fr;align-items:center;gap:8px;white-space:nowrap}

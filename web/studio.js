@@ -20,6 +20,7 @@ import { backupBeforeRecovery, isRecoveryWorkspace } from './recovery-workspace.
 import { createExportSession } from './export-session.js';
 import {desktopCall} from './desktop-client.js';
 import {renderDialogueSkinCard} from './dialogue-skin-card.js';
+import {renderStageMoveCard} from './stage-move-card.js';
 import { VirtualScriptList } from './virtual-script-list.js';
 import { renderLineTakePanel, onVoiceQueueChange, voiceNotice, clearVoiceNotice } from './line-take-panel.js';
 import { CustomObjectEditorController } from './custom-object-editor-controller.js';
@@ -1127,7 +1128,8 @@ function renderAnimationPane(){
     openSound(target){const line=project.lines[target];if(line)soundPicker.open(line,{lineNumber:target+1})}});
 }
 function renderDialogueSkinPane(){renderDialogueSkinCard($('#dialogueSkinCard'),{project,workspace,onPreview:()=>compile(),onCommit:label=>{scheduleSave(label,'dialogue-skin');renderAll()},setStatus:text=>{$('#importStatus').textContent=text}})}
-function renderStageQuickControls(){renderDialogueSkinPane();
+function renderStageMovePane(){renderStageMoveCard($('#stageMoveCard'),{project,line:currentLine(),onPreview:()=>compile(),onCommit:label=>{const line=currentLine();scheduleSave(label,`stage-move:${line?.id||''}`);renderAll()}})}
+function renderStageQuickControls(){renderDialogueSkinPane();renderStageMovePane();
   const line=currentLine(),perf=currentPerf();$('#stageQuickControls').hidden=!line||line.type==='command';
   const names=(perf?.stage||[]).map(actor=>project.characters.find(c=>c.id===actor.characterId)?.name).filter(Boolean);
   $('#stageQuickRoster').textContent=names.length?`当前 ${names.length} 人：${names.join('、')}`:'当前无人上镜';

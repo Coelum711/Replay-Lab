@@ -20,6 +20,7 @@
     "core/id.js",
     "core/index.js",
     "core/language.js",
+    "core/move-curves.js",
     "core/normalize.js",
     "core/project.js",
     "core/projection.js",

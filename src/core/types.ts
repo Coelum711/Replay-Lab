@@ -909,6 +909,8 @@ export interface ReplayDirectorCommand {
   position?: StagePosition | null;
   value?: string | null;
   duration?: number | null;
+  /** `/move … 0.25s 急停`: glide there instead of cutting. */
+  move?: import('./move-curves.js').StageMove | null;
   /** Source-level beat timing. Stored on each command so grouping remains derived and draggable. */
   beatMode?: DirectorBeatTimingMode;
 }
@@ -982,6 +984,8 @@ export interface ReplayLine {
   stagePositions?: Record<string, StagePosition>;
   /** Freeform visual placement authored by direct manipulation. Missing entries inherit earlier Scene state. */
   stageTransforms?: Record<string, StageTransform | null>;
+  /** How on-stage characters get from the previous line's spot to this one (cut or move). Undefined = project default. */
+  stageMove?: import('./move-curves.js').StageMove | null;
   /** Human-authored camera framing. Missing means inherit inside the Scene; null resets to full-frame. */
   cameraTransform?: CameraTransform | null;
   scene?: ScenePatch;
@@ -1019,6 +1023,8 @@ export interface ReplaySettings {
   ttsProvider?: string;
   /** Textbox skin from assets/system (images + 对话框.json). Absent = the built-in look. */
   dialogueSkin?: import('./dialogue-skin.js').DialogueSkin | null;
+  /** Default for lines that do not choose cut or move themselves. Absent = cut. */
+  stageMoveDefault?: import('./move-curves.js').StageMove | null;
 }
 
 export interface ReplayProject {
@@ -1081,6 +1087,12 @@ export interface PerformanceLine {
   puppetParams?: Record<string, Record<string, number>>;
   /** Overrides to ease from at the line start (same expression, different values). */
   puppetFrom?: Record<string, Record<string, number>>;
+  /** Resolved line move (line setting, else project default). */
+  stageMove?: import('./move-curves.js').StageMove | null;
+  /** Per-character moves from `/move` commands just before this line; they win over stageMove. */
+  actorMoves?: Record<string, import('./move-curves.js').StageMove>;
+  /** Set on a `/move` command line that glides; attached to the next shown line. */
+  stageMoveEvent?: { characterId: string; move: import('./move-curves.js').StageMove };
   stage: Array<{ characterId: string; name: string; position: StagePosition; active: boolean; transform?: StageTransform; motion?: RplGenMethodSpec | null; placementSource: StagePlacementSource }>;
   state: PerformanceState;
   camera: CameraEffect;

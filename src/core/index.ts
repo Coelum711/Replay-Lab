@@ -16,3 +16,4 @@ export * from './body.js';
 export * from './body-import.js';
 export * from './filters.js';
 export * from './dialogue-skin.js';
+export * from './move-curves.js';

@@ -31,6 +31,7 @@ import type {
 } from '../core/types.js';
 import { replayEase } from './easing.js';
 import { dialogueSkinActive, resolveDialogueLayout, type DialogueSkin } from '../core/dialogue-skin.js';
+import { stageMoveProgress } from '../core/move-curves.js';
 import { drawNineSlice, drawTintedNineSlice, drawRpgWindow, rpgTextColor, looksLikeRpgWindowSkin } from './window-skin.js';
 import { evaluateRplGenMotion } from './rplgen-motion.js';
 import { evaluatePuppet, linePuppetOverridesAt, normalizePuppetRig, type PuppetPartState } from '../puppet/rig.js';
@@ -1473,6 +1474,21 @@ export class CanvasStageRenderer {
     this.drawSceneBanner(line, localTime);
   }
 
+  /** Where a character stood on the last shown line before `index`, if they were on stage there. */
+  private previousActorRect(index: number, characterId: string, width: number, height: number, framing: PerformanceLine['cameraTransform']): { cx: number; maxW: number; maxH: number; floor: number } | null {
+    for (let i = index - 1; i >= 0; i--) {
+      const previous = this.performance.lines[i];
+      if (!previous || !(previous.duration > 0)) continue;
+      if (previous.state.cg && previous.state.cgPresentation?.hideCharacters) return null;
+      const at = previous.stage.findIndex(item => item.characterId === characterId);
+      if (at < 0) return null;
+      const actor = previous.stage[at]!;
+      const base = stageRect(actor.position, previous.stage.length, width, height, at, previous.stage.map(item => item.position));
+      return transformedStageRect(base, actor.transform, width, height, previous.sceneGraph?.projection ?? 'flat', framing);
+    }
+    return null;
+  }
+
   /** Font family for dialogue text; a skin may set its own. */
   private textFamily = 'system-ui';
   /** Text colours from the active Window.png, for `\\C[n]` / `{色n}`. */
@@ -1635,7 +1651,13 @@ export class CanvasStageRenderer {
           const motionTransform = stageMotion.dz
             ? { ...authoredTransform, depth: clamp((Number(authoredTransform.depth) || 0) + stageMotion.dz, 0, 1) }
             : authoredTransform;
-          const rect = transformedStageRect(baseRect, motionTransform, width, height, line.sceneGraph?.projection ?? 'flat', framing);
+          let rect = transformedStageRect(baseRect, motionTransform, width, height, line.sceneGraph?.projection ?? 'flat', framing);
+          const moveProgress = stageMoveProgress(line.actorMoves?.[actor.characterId] ?? line.stageMove, localTime);
+          if (moveProgress !== null && moveProgress !== 1) {
+            const from = this.previousActorRect(index, actor.characterId, width, height, framing);
+            if (from) rect = { cx: from.cx + (rect.cx - from.cx) * moveProgress, floor: from.floor + (rect.floor - from.floor) * moveProgress,
+              maxW: Math.max(1, from.maxW + (rect.maxW - from.maxW) * moveProgress), maxH: Math.max(1, from.maxH + (rect.maxH - from.maxH) * moveProgress) };
+          }
           let viseme: Viseme = 'SILENCE';
           if (isCurrent) {
             if (line.mouth === 'off') viseme = 'SILENCE';
