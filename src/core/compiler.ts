@@ -1,3 +1,4 @@
+import { normalizeStageMove } from './move-curves.js';
 import { lineMoodText, triggeredExpression } from './acting.js';
 import { estimateDuration } from './project.js';
 import { parseTextTags } from './text-tags.js';
@@ -657,6 +658,8 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       ...(tagged.ranges.length ? { textTags: tagged.ranges } : {}),
       ...(blip ? { textBlip: { ...blip } } : {}),
       screenFilter: currentFilter,
+      ...(() => { const move = line.stageMove !== undefined ? normalizeStageMove(line.stageMove) : normalizeStageMove(project.settings.stageMoveDefault); return move?.mode === 'move' ? { stageMove: move } : {}; })(),
+      ...(line.type === 'command' && line.command?.kind === 'move' && line.command.characterId && line.command.move?.mode === 'move' ? { stageMoveEvent: { characterId: line.command.characterId, move: normalizeStageMove(line.command.move)! } } : {}),
       ...(line.type === 'command' && line.command?.kind === 'emote' && line.command.characterId ? { emoteEvent: emoteFromCommand(line.command) } : {}),
       ...(line.type === 'command' && line.command?.kind === 'plugin' && line.command.target ? { pluginEvent: { name: line.command.target, value: line.command.value ?? '', duration: Math.max(0.01, Number(line.command.duration) || 1.5), offset: 0 } } : {}),
       ...(line.type === 'command' && line.command?.kind === 'card' ? { card: { title: line.command.value ?? '', subtitle: line.command.target ?? '', duration } } : {}),
@@ -710,6 +713,14 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
       (target.pluginEffects ??= []).push({ ...effect, offset: from - target.start });
     }
   }
+
+  // `/move … 0.25s` glides the character on the next line that is actually shown.
+  lines.forEach((source, i) => {
+    const event = source.stageMoveEvent;
+    if (!event) return;
+    const target = lines.slice(i + 1).find(line => line.duration > 0);
+    if (target) target.actorMoves = { ...(target.actorMoves ?? {}), [event.characterId]: event.move };
+  });
 
   // An emote stays up across the following lines like a shake does.
   for (const source of lines) {

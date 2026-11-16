@@ -1,3 +1,4 @@
+import { formatMoveWords, parseMoveWords } from './move-curves.js';
 import { FILTER_PRESETS, NEUTRAL_FILTER, decodeFilterValue, encodeFilterValue, filterOverrideWords, parseFilterWords } from './filters.js';
 import { pluginCommand, pluginFilter, pluginTransition } from '../plugins/stage-plugins.js';
 import type { DirectorCommandKind, ReplayDirectorCommand, ReplayLine, ReplayProject, StagePosition } from './types.js';
@@ -9,6 +10,7 @@ export interface DirectorCommandParseResult {
 }
 
 const POSITION_VALUES = new Set<StagePosition>(['auto', 'left', 'center', 'right']);
+const POSITION_WORDS: Record<string, StagePosition> = { 左: 'left', 中: 'center', 中间: 'center', 右: 'right', 自动: 'auto' };
 const CAMERA_VALUES = new Set(['none', 'push', 'shake', 'focus-speaker']);
 export const TRANSITION_ALIASES: Record<string, string> = {
   cut: 'cut', 切: 'cut', fade: 'fade', 淡入: 'fade', 黑场: 'fade', dissolve: 'dissolve', 溶解: 'dissolve', 交叉: 'dissolve',
@@ -113,9 +115,12 @@ export function parseDirectorCommand(project: ReplayProject, text: string): Dire
     if (!c) return { command: null, error: `找不到角色：${args[0]}` };
     if (kind === 'dismiss') return { command: { kind, target: args[0], characterId: c.id } };
     if (kind === 'move') {
-      const rawPos = (args[1] ?? 'auto') as StagePosition;
-      if (!POSITION_VALUES.has(rawPos)) return { command: null, error: `未知站位：${args[1]}` };
-      return { command: { kind, target: args[0], characterId: c.id, ...(rawPos !== 'auto' ? { position: rawPos } : {}) } };
+      const word = args[1] ?? 'auto', positional = POSITION_VALUES.has((POSITION_WORDS[word] ?? word) as StagePosition);
+      const rawPos = (positional ? POSITION_WORDS[word] ?? word : 'auto') as StagePosition;
+      const parsed = parseMoveWords(args.slice(positional ? 2 : 1));
+      if (!positional && 'error' in parsed) return { command: null, error: `未知站位：${args[1]}` };
+      if ('error' in parsed) return { command: null, error: parsed.error };
+      return { command: { kind, target: args[0], characterId: c.id, ...(rawPos !== 'auto' ? { position: rawPos } : {}), ...(parsed.move ? { move: parsed.move } : {}) } };
     }
     if (kind === 'motion') {
       const action = (args[1] ?? '').trim();
@@ -268,7 +273,7 @@ export function formatDirectorCommand(project: ReplayProject, command: ReplayDir
   switch (command.kind) {
     case 'dismiss': return `/dismiss ${quoteArg(charName ?? command.target ?? '')}`.trim();
     case 'enter': return `/enter ${quoteArg(charName ?? command.target ?? '')}${command.position && command.position !== 'auto' ? ` ${command.position}` : ''}`.trim();
-    case 'move': return `/move ${quoteArg(charName ?? command.target ?? '')}${command.position && command.position !== 'auto' ? ` ${command.position}` : ''}`.trim();
+    case 'move': { const words = formatMoveWords(command.move); return `/move ${quoteArg(charName ?? command.target ?? '')}${command.position && command.position !== 'auto' ? ` ${command.position}` : words ? ' auto' : ''}${words ? ` ${words}` : ''}`.trim(); }
     case 'motion': return `/motion ${quoteArg(charName ?? command.target ?? '')} ${quoteArg(command.value ?? 'replace')} ${Math.max(0, Number(command.duration) || 0.5)}`.trim();
     case 'expression': return `/expression ${quoteArg(charName ?? command.target ?? '')} ${quoteArg(command.expression ?? 'default')}`.trim();
     case 'pose': return `/pose ${quoteArg(charName ?? command.target ?? '')} ${quoteArg(command.value ?? 'default')}`.trim();
