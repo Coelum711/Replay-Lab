@@ -113,17 +113,19 @@ interface Glyph { char: string; index: number; scale: number; width: number; }
 /** Like drawFittedText but each character can wobble, wave, grow or change colour. */
 export function drawTaggedText(ctx: CanvasRenderingContext2D, options: {
   fullText: string; shownCount: number; ranges: TextTagRange[]; x: number; y: number; maxWidth: number; maxHeight: number;
-  baseSize: number; minSize: number; ratio: number; align: 'left' | 'center'; weight?: string; time: number; revealTimes?: (index: number) => number;
+  baseSize: number; minSize: number; ratio: number; align: 'left' | 'center'; weight?: string; time: number; revealTimes?: (index: number) => number; family?: string;
+  /** Colour n of the window skin, for `palette:n` colours. */
+  palette?: (index: number) => string;
 }): void {
   const { fullText, ranges, x, y, maxWidth, maxHeight, ratio, align, time } = options;
-  const weight = options.weight ?? '';
+  const weight = options.weight ?? '', family = options.family ?? 'system-ui';
   const chars = Array.from(fullText);
   const styleAt = (i: number) => ranges.filter(range => i >= range.from && i < range.to);
   const scaleOf = (i: number) => styleAt(i).reduce((scale, range) => scale * (range.kind === 'big' ? 1.45 : range.kind === 'small' ? 0.72 : 1), 1);
   let size = options.baseSize;
   let rows: Glyph[][] = [];
   for (;; size -= 1) {
-    ctx.font = `${weight} ${size}px system-ui`.trim();
+    ctx.font = `${weight} ${size}px ${family}`.trim();
     rows = [[]]; let rowWidth = 0;
     chars.forEach((char, index) => {
       if (char === '\n') { rows.push([]); rowWidth = 0; return; }
@@ -151,10 +153,10 @@ export function drawTaggedText(ctx: CanvasRenderingContext2D, options: {
         if (style.kind === 'wave') dy += Math.sin(time * 7 - g.index * 0.6) * size * 0.14;
         if (style.kind === 'pop') { const since = time - (options.revealTimes?.(g.index) ?? 0); extra *= since < 0.18 ? 0.4 + 0.6 * easeOutBack(clamp(since / 0.18, 0, 1)) : 1; }
         if (style.kind === 'rainbow') fill = RAINBOW[(g.index + Math.floor(time * 8)) % RAINBOW.length]!;
-        if (style.kind === 'color' && style.color) fill = style.color;
+        if (style.kind === 'color' && style.color) fill = style.color.startsWith('palette:') ? (options.palette ?? defaultTextPalette)(Number(style.color.slice(8))) : style.color;
       }
       ctx.save();
-      ctx.font = `${weight} ${Math.round(size * g.scale)}px system-ui`.trim();
+      ctx.font = `${weight} ${Math.round(size * g.scale)}px ${family}`.trim();
       ctx.fillStyle = fill;
       const cx = cursorX + g.width / 2, cy = baseline + size * g.scale / 2;
       ctx.translate(cx + dx, cy + dy); ctx.scale(extra, extra);
@@ -266,3 +268,7 @@ export function drawChapterCard(ctx: CanvasRenderingContext2D, card: ChapterCard
   }
   ctx.restore();
 }
+
+/** RPG Maker MZ's default Window.png text colours, used when the project has no window skin. */
+export const DEFAULT_TEXT_PALETTE = ['#ffffff', '#20a0d6', '#ff784c', '#66cc40', '#99ccff', '#ccc0ff', '#ffffa0', '#808080', '#c0c0c0', '#2080cc', '#ff3810', '#00a010', '#3e9ade', '#a098ff', '#ffcc20', '#000000', '#84aaff', '#ffff40', '#ff2020', '#202040', '#e08040', '#f0c040', '#4080c0', '#40c0f0', '#80ff80', '#c08080', '#8080ff', '#ff80ff', '#00a040', '#00e060', '#a060e0', '#c080ff'];
+export function defaultTextPalette(index: number): string { return DEFAULT_TEXT_PALETTE[Math.max(0, Math.min(31, Math.floor(index)))] ?? '#ffffff'; }
