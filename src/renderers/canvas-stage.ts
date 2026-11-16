@@ -32,6 +32,7 @@ import type {
 import { replayEase } from './easing.js';
 import { dialogueSkinActive, resolveDialogueLayout, type DialogueSkin } from '../core/dialogue-skin.js';
 import { stageMoveProgress } from '../core/move-curves.js';
+import { stageSlotX } from '../core/stage-slots.js';
 import { drawNineSlice, drawTintedNineSlice, drawRpgWindow, rpgTextColor, looksLikeRpgWindowSkin } from './window-skin.js';
 import { evaluateRplGenMotion } from './rplgen-motion.js';
 import { evaluatePuppet, linePuppetOverridesAt, normalizePuppetRig, type PuppetPartState } from '../puppet/rig.js';
@@ -419,14 +420,7 @@ export function screenShakeOffset(shakes: PerformanceLine['shakes'], localTime: 
 }
 
 export function stageRect(position: StagePosition, count: number, width: number, height: number, index = 0, positions: StagePosition[] = []): { cx: number; maxW: number; maxH: number; floor: number } {
-  const duplicateSlots = positions.length === count && new Set(positions.filter(value => value !== 'auto')).size < positions.filter(value => value !== 'auto').length;
-  const needsSpread = count > 3 || duplicateSlots;
-  let x: number;
-  if (needsSpread) {
-    const left = count >= 5 ? 0.10 : 0.14;
-    const right = 1 - left;
-    x = count <= 1 ? 0.5 : left + (right - left) * (Math.max(0, Math.min(count - 1, index)) / (count - 1));
-  } else x = position === 'left' ? 0.22 : position === 'right' ? 0.78 : 0.5;
+  const x = stageSlotX(position, count, index, positions);
   // Keep normal VN casts at a stable apparent character size. Three-person shots
   // should gain density through horizontal overlap, not by shrinking every sprite
   // the moment a third actor enters. Only unusually crowded 4+ actor layouts
