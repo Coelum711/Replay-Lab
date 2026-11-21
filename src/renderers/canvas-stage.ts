@@ -33,6 +33,7 @@ import { replayEase } from './easing.js';
 import { dialogueSkinActive, resolveDialogueLayout, type DialogueSkin } from '../core/dialogue-skin.js';
 import { stageMoveProgress } from '../core/move-curves.js';
 import { stageSlotX } from '../core/stage-slots.js';
+import { layerPoseAt } from '../core/layers.js';
 import { drawNineSlice, drawTintedNineSlice, drawRpgWindow, rpgTextColor, looksLikeRpgWindowSkin } from './window-skin.js';
 import { evaluateRplGenMotion } from './rplgen-motion.js';
 import { evaluatePuppet, linePuppetOverridesAt, normalizePuppetRig, type PuppetPartState } from '../puppet/rig.js';
@@ -1483,6 +1484,31 @@ export class CanvasStageRenderer {
     return null;
   }
 
+  /** Timeline layers (images / picture-in-picture) at absolute time `time`, in screen space. */
+  private async drawStageLayers(z: 'characters' | 'top', time: number): Promise<void> {
+    const layers = this.performance.layers;
+    if (!layers?.length) return;
+    const { width, height } = this.canvas, k = width / 1280, ctx = this.ctx;
+    for (const layer of layers) {
+      if (layer.z !== z) continue;
+      const pose = layerPoseAt(layer, time);
+      if (!pose || pose.opacity <= 0) continue;
+      const img = await this.image(layer.assetId);
+      if (!img || !img.naturalWidth) continue;
+      const w = pose.width * width, h = w * img.naturalHeight / img.naturalWidth;
+      const f = layer.frame, radius = f.mask === 'circle' ? Math.min(w, h) / 2 : Math.min(f.radius * k, w / 2, h / 2), border = f.borderWidth * k;
+      ctx.save();
+      ctx.globalAlpha *= pose.opacity;
+      ctx.translate(pose.x * width, pose.y * height);
+      if (pose.rotation) ctx.rotate(pose.rotation * Math.PI / 180);
+      const shape = () => { ctx.beginPath(); if (f.mask === 'circle') ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); else roundRect(ctx, -w / 2, -h / 2, w, h, radius); };
+      if (f.shadow) { ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 18 * k; ctx.shadowOffsetY = 6 * k; shape(); ctx.fillStyle = f.borderWidth ? f.borderColor : 'rgba(0,0,0,.4)'; ctx.fill(); ctx.restore(); }
+      ctx.save(); shape(); ctx.clip(); ctx.drawImage(img, -w / 2, -h / 2, w, h); ctx.restore();
+      if (border > 0) { shape(); ctx.lineWidth = border; ctx.strokeStyle = f.borderColor; ctx.stroke(); }
+      ctx.restore();
+    }
+  }
+
   /** Font family for dialogue text; a skin may set its own. */
   private textFamily = 'system-ui';
   /** Text colours from the active Window.png, for `\\C[n]` / `{色n}`. */
@@ -1735,6 +1761,7 @@ export class CanvasStageRenderer {
       } else { this.scratchDepth--; await this.withEffects(line.sceneGraph?.worldEffects, drawWorld, line, localTime); }
     } else await this.withEffects(line.sceneGraph?.worldEffects, drawWorld, line, localTime);
     await this.drawCustomObjects(line, 'screen', localTime);
+    await this.drawStageLayers('characters', line.start + localTime);
 
     if (!this.hideDialogue && !(line.state.cg && line.state.cgPresentation?.hideTextbox)) {
       const presentationType = line.type === 'dice' ? ['system:dice','screen.presentation'] as const
@@ -1744,6 +1771,7 @@ export class CanvasStageRenderer {
       const uiFx = this.nodeEffects(line, presentationType[0], presentationType[1]);
       await this.withEffects(uiFx.effects, () => this.drawDialogueAndBanner(line, progress, localTime), line, localTime, uiFx.ambient);
     }
+    await this.drawStageLayers('top', line.start + localTime);
     this.drawPluginLayer('screen', line, localTime, {});
     if (line.transition === 'fade' && localTime < 0.42) {
       const transitionFx = this.nodeEffects(line, 'fx:transition', 'screen.fx');

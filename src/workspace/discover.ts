@@ -6,7 +6,7 @@ import type { WorkspaceFileInfo } from './types.js';
 /** RPG Maker style: a file dropped into one of these folders shows up as that kind of asset. */
 export const ASSET_FOLDER_KINDS: ReadonlyArray<readonly [string, AssetKind]> = [
   ['assets/characters/', 'character'], ['assets/backgrounds/', 'background'], ['assets/cg/', 'cg'],
-  ['assets/bgm/', 'bgm'], ['assets/ambient/', 'ambient'], ['assets/sfx/', 'sfx'], ['assets/voice/imported/', 'voice'], ['assets/system/', 'other']
+  ['assets/bgm/', 'bgm'], ['assets/ambient/', 'ambient'], ['assets/sfx/', 'sfx'], ['assets/voice/imported/', 'voice'], ['assets/system/', 'other'], ['assets/layers/', 'other']
 ];
 const AUDIO = { mp3: 'audio/mpeg', ogg: 'audio/ogg', oga: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', aac: 'audio/aac', flac: 'audio/flac', opus: 'audio/ogg', webm: 'audio/webm' } as Record<string, string>;
 const IMAGE = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif' } as Record<string, string>;
