@@ -34,6 +34,7 @@ import { dialogueSkinActive, resolveDialogueLayout, type DialogueSkin } from '..
 import { stageMoveProgress } from '../core/move-curves.js';
 import { stageSlotX } from '../core/stage-slots.js';
 import { layerPoseAt } from '../core/layers.js';
+import type { EmoteKind } from '../core/types.js';
 import { drawNineSlice, drawTintedNineSlice, drawRpgWindow, rpgTextColor, looksLikeRpgWindowSkin } from './window-skin.js';
 import { evaluateRplGenMotion } from './rplgen-motion.js';
 import { evaluatePuppet, linePuppetOverridesAt, normalizePuppetRig, type PuppetPartState } from '../puppet/rig.js';
@@ -1484,6 +1485,14 @@ export class CanvasStageRenderer {
     return null;
   }
 
+  /** Character heads in screen space from the last drawn frame (for layers that follow someone). */
+  private screenHeads = new Map<string, { x: number; y: number; h: number }>();
+  /** A character's head on the last drawn frame, as stage fractions (for editors), or null. */
+  headOnScreen(characterId: string): { x: number; y: number } | null {
+    const head = this.screenHeads.get(characterId);
+    return head ? { x: head.x / this.canvas.width, y: head.y / this.canvas.height } : null;
+  }
+
   /** Timeline layers (images / picture-in-picture) at absolute time `time`, in screen space. */
   private async drawStageLayers(z: 'characters' | 'top', time: number): Promise<void> {
     const layers = this.performance.layers;
@@ -1493,13 +1502,21 @@ export class CanvasStageRenderer {
       if (layer.z !== z) continue;
       const pose = layerPoseAt(layer, time);
       if (!pose || pose.opacity <= 0) continue;
+      let cx = pose.x * width, cy = pose.y * height;
+      if (layer.follow) { const head = this.screenHeads.get(layer.follow); if (!head) continue; cx = head.x + pose.x * width; cy = head.y + pose.y * height; }
+      if (layer.emote) {
+        ctx.save(); ctx.globalAlpha *= pose.opacity; ctx.translate(cx, cy); if (pose.rotation) ctx.rotate(pose.rotation * Math.PI / 180);
+        drawEmote(ctx, layer.emote as EmoteKind, 0, 0, pose.width * width, time - layer.start, Math.max(0.01, layer.end - layer.start));
+        ctx.restore();
+        continue;
+      }
       const img = await this.image(layer.assetId);
       if (!img || !img.naturalWidth) continue;
       const w = pose.width * width, h = w * img.naturalHeight / img.naturalWidth;
       const f = layer.frame, radius = f.mask === 'circle' ? Math.min(w, h) / 2 : Math.min(f.radius * k, w / 2, h / 2), border = f.borderWidth * k;
       ctx.save();
       ctx.globalAlpha *= pose.opacity;
-      ctx.translate(pose.x * width, pose.y * height);
+      ctx.translate(cx, cy);
       if (pose.rotation) ctx.rotate(pose.rotation * Math.PI / 180);
       const shape = () => { ctx.beginPath(); if (f.mask === 'circle') ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); else roundRect(ctx, -w / 2, -h / 2, w, h, radius); };
       if (f.shadow) { ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 18 * k; ctx.shadowOffsetY = 6 * k; shape(); ctx.fillStyle = f.borderWidth ? f.borderColor : 'rgba(0,0,0,.4)'; ctx.fill(); ctx.restore(); }
@@ -1611,6 +1628,7 @@ export class CanvasStageRenderer {
   }
 
   private async renderLineContent(index: number, localTime = 0): Promise<void> {
+    this.screenHeads = new Map();
     const line = this.performance.lines[index];
     const { width, height } = this.canvas;
     this.ctx.clearRect(0, 0, width, height);
@@ -1739,6 +1757,9 @@ export class CanvasStageRenderer {
         const side = emote.kind === 'dots' || emote.kind === 'gloom' || emote.kind === 'steam' ? 0 : 1;
         drawEmote(this.ctx, emote.kind, head.x + side * head.h * 0.085, head.y + size * (side ? 0.2 : -0.45), size, localTime - emote.offset, emote.duration);
       }
+      // Heads in screen space, for layers that follow a character.
+      const toScreen = typeof this.ctx.getTransform === 'function' ? this.ctx.getTransform() : null, headScale = toScreen ? Math.hypot(toScreen.a, toScreen.b) || 1 : 1;
+      this.screenHeads = new Map([...heads].map(([id, head]) => { const p = toScreen ? toScreen.transformPoint({ x: head.x, y: head.y }) : head; return [id, { x: p.x, y: p.y, h: head.h * headScale }]; }));
       const namedHeads: Record<string, { x: number; y: number; h: number }> = {};
       for (const [id, head] of heads) { const name = this.character(id)?.name; if (name) namedHeads[name] = head; }
       this.drawPluginLayer('world', line, localTime, namedHeads);

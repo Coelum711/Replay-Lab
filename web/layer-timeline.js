@@ -3,7 +3,7 @@
  * across lines, but every edge and keyframe is stored against the nearest line, so re-rolled voice
  * keeps them in place. Snaps to line boundaries; hold Option (Alt) to place freely inside a line.
  */
-import { LAYER_TRACKS, MOVE_CURVE_PRESETS, DEFAULT_LAYER_POSE, DEFAULT_LAYER_FRAME, anchorAt, anchorTime, layerPoseAt, normalizeLayer, makeId } from '../dist/index.js';
+import { LAYER_EMOTES, layerTracks, MOVE_CURVE_PRESETS, DEFAULT_LAYER_POSE, DEFAULT_LAYER_FRAME, anchorAt, anchorTime, layerPoseAt, normalizeLayer, makeId } from '../dist/index.js';
 
 const el = (tag, props = {}, ...children) => { const node = Object.assign(document.createElement(tag), props); node.append(...children.filter(c => c != null)); return node; };
 const round = (v, n = 2) => Math.round(v * 10 ** n) / 10 ** n;
@@ -70,6 +70,16 @@ export function renderLayerTimeline(host, ctx) {
     }
     ctx.onCommit(images.length > 1 ? `加入 ${images.length} 个图层` : '加入图层');
   };
+  const addEmote = () => {
+    const line = lines[ctx.selectedIndex]?.duration > 0 ? lines[ctx.selectedIndex] : lines.find(l => l.duration > 0);
+    if (!line) return;
+    const follow = line.stage?.some(actor => actor.characterId === line.speakerId) ? line.speakerId : line.stage?.[0]?.characterId ?? null;
+    const layer = normalizeLayer({ id: makeId('layer'), name: '漫符', emote: 'surprise', follow, assetId: null, track: 'emote',
+      start: { lineId: line.lineId, offset: 0 }, end: { lineId: line.lineId, offset: null },
+      base: follow ? { x: 0.05, y: -0.02, width: 0.06, opacity: 1, rotation: 0 } : { x: 0.5, y: 0.3, width: 0.08, opacity: 1, rotation: 0 }, keyframes: [] });
+    layers.push(layer); state.layerId = layer.id; state.keyframeId = null;
+    ctx.onCommit('加入漫符');
+  };
   fileInput.onchange = () => { if (fileInput.files?.length) void addAt(fileInput.files); fileInput.value = ''; };
 
   const head = el('div', { className: 'row layer-head' },
@@ -79,6 +89,7 @@ export function renderLayerTimeline(host, ctx) {
     Object.assign(el('button', { className: 'small', textContent: '◀', title: '往前看' }), { disabled: !win?.canBack, onclick: () => { state.windowShift -= 1; ctx.onPreview(true); } }),
     Object.assign(el('button', { className: 'small', textContent: '回到当前句' }), { onclick: () => { state.windowShift = 0; ctx.onPreview(true); } }),
     Object.assign(el('button', { className: 'small', textContent: '▶', title: '往后看' }), { disabled: !win?.canForward, onclick: () => { state.windowShift += 1; ctx.onPreview(true); } }),
+    Object.assign(el('button', { className: 'small', textContent: '+ 漫符' }), { onclick: () => addEmote() }),
     Object.assign(el('button', { className: 'small primary', textContent: '+ 图片' }), { onclick: () => fileInput.click() }),
     fileInput);
   host.append(head);
@@ -125,9 +136,12 @@ export function renderLayerTimeline(host, ctx) {
   };
   const timeAtX = clientX => { const r = lineLane.getBoundingClientRect(); return win.t0 + (clientX - r.left) / (r.width || 1) * span(); };
 
-  // Tracks
-  for (const track of LAYER_TRACKS) {
+  // Tracks (top row is drawn in front)
+  const tracks = layerTracks(project);
+  const saveTracks = (next, label) => { project.layerTracks = next.map(t => ({ ...t })); ctx.onCommit(label); };
+  for (const [trackIndex, track] of tracks.entries()) {
     const lane = el('div', { className: 'layer-lane track' });
+    lane.dataset.track = track.key;
     lane.ondragover = event => { event.preventDefault(); lane.classList.add('drop'); };
     lane.ondragleave = () => lane.classList.remove('drop');
     lane.ondrop = event => { event.preventDefault(); lane.classList.remove('drop'); const files = event.dataTransfer?.files; if (files?.length) { const t = snap(timeAtX(event.clientX), event); void addAt(files, t).then(() => { const last = layers.at(-1); if (last && last.track !== track.key) { last.track = track.key; ctx.onCommit('调整图层轨道'); } }); } };
@@ -151,7 +165,7 @@ export function renderLayerTimeline(host, ctx) {
         const startTime = anchorTime(raw.start, lines), endTime = anchorTime(raw.end, lines);
         const keyTimes = raw.keyframes.map(k => [k, anchorTime(k.at, lines)]);
         const grab = timeAtX(event.clientX);
-        let moved = false;
+        let moved = false, pendingTrack = null;
         state.layerId = raw.id; state.keyframeId = kfId || null;
         try { clip.setPointerCapture(event.pointerId); } catch {}
         clip.onpointermove = ev => {
@@ -164,6 +178,9 @@ export function renderLayerTimeline(host, ctx) {
             if (ns === startTime + delta && ne0 !== endTime + delta) ns = ne0 - length;
             ns = Math.max(0, Math.min(perf.duration - length, ns));
             raw.start = anchorAt(ns, lines); raw.end = endAnchor(ns + length, lines);
+            const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('.layer-lane.track');
+            timeline.querySelectorAll('.layer-lane.track.drop').forEach(node => { if (node !== over) node.classList.remove('drop'); });
+            if (over?.dataset.track && over.dataset.track !== raw.track) { over.classList.add('drop'); pendingTrack = over.dataset.track; } else pendingTrack = null;
             for (const [k, t] of keyTimes) if (t !== null) k.at = anchorAt(Math.min(ns + length, t + (ns - startTime)), lines);
           } else if (mode === 'left') {
             const ns = Math.min(endTime - 0.1, Math.max(0, snap(startTime + delta, ev)));
@@ -181,14 +198,28 @@ export function renderLayerTimeline(host, ctx) {
         };
         clip.onpointerup = () => {
           clip.onpointermove = null; clip.onpointerup = null;
-          if (moved) ctx.onCommit(mode === 'kf' ? '移动关键帧' : mode === 'move' ? '移动图层' : '调整图层长度');
+          if (pendingTrack) raw.track = pendingTrack;
+          if (moved) ctx.onCommit(mode === 'kf' ? '移动关键帧' : mode === 'move' ? (pendingTrack ? '移到别的轨道' : '移动图层') : '调整图层长度');
           else { if (kfId) { const k = raw.keyframes.find(item => item.id === kfId); const at = k ? lines.findIndex(l => l.lineId === k.at.lineId) : -1; if (at >= 0) { ctx.selectLine(at); return; } } ctx.onPreview(true); }
         };
       };
       lane.append(clip);
     }
-    timeline.append(el('div', { className: 'layer-row' }, el('span', { className: 'layer-row-label', textContent: track.label }), lane));
+    const label = el('span', { className: 'layer-row-label track-label', textContent: track.label, title: '双击改名 · 越上面越靠前' });
+    label.ondblclick = () => {
+      const input = el('input', { value: track.label, className: 'track-rename' });
+      const done = () => { const name = input.value.trim(); if (name && name !== track.label) saveTracks(tracks.map(t => t.key === track.key ? { ...t, label: name } : t), '重命名轨道'); else ctx.onPreview(true); };
+      input.onkeydown = e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { input.value = track.label; input.blur(); } };
+      input.onblur = done; label.replaceChildren(input); input.focus(); input.select();
+    };
+    const used = layers.some(layer => (layer.track || 'pip') === track.key);
+    const tools = el('span', { className: 'track-tools' },
+      Object.assign(el('button', { className: 'tiny', textContent: '▲', title: '往前（上移）' }), { disabled: trackIndex === 0, onclick: () => { const next = [...tracks]; [next[trackIndex - 1], next[trackIndex]] = [next[trackIndex], next[trackIndex - 1]]; saveTracks(next, '轨道上移'); } }),
+      Object.assign(el('button', { className: 'tiny', textContent: '▼', title: '往后（下移）' }), { disabled: trackIndex === tracks.length - 1, onclick: () => { const next = [...tracks]; [next[trackIndex + 1], next[trackIndex]] = [next[trackIndex], next[trackIndex + 1]]; saveTracks(next, '轨道下移'); } }),
+      used ? null : Object.assign(el('button', { className: 'tiny', textContent: '×', title: '删除这条空轨道' }), { onclick: () => saveTracks(tracks.filter(t => t.key !== track.key), '删除轨道') }));
+    timeline.append(el('div', { className: 'layer-row' }, el('span', { className: 'layer-row-head' }, label, tools), lane));
   }
+  timeline.append(el('div', { className: 'layer-row' }, el('span'), Object.assign(el('button', { className: 'tiny add-track', textContent: '+ 轨道' }), { onclick: () => { let n = tracks.length + 1; while (tracks.some(t => t.key === `track${n}`)) n++; saveTracks([...tracks, { key: `track${n}`, label: `轨道 ${n}` }], '新建轨道'); } })));
   if (playhead) timeline.querySelectorAll('.layer-lane').forEach(lane => lane.append(playhead.cloneNode()));
 
   // Properties
@@ -221,9 +252,22 @@ export function renderLayerTimeline(host, ctx) {
     return el('label', { className: 'muted' }, label, s);
   };
   panel.append(el('div', { className: 'grid2' },
-    select('轨道', raw.track, LAYER_TRACKS.map(t => [t.key, t.label]), v => { raw.track = v; }),
+    select('轨道', raw.track, tracks.map(t => [t.key, t.label]), v => { raw.track = v; }),
     select('层级', raw.z, [['characters', '在角色之上'], ['top', '在对话框之上']], v => { raw.z = v; })));
 
+  const sameTrack = layers.filter(layer => (layer.track || 'pip') === (raw.track || 'pip'));
+  const shift = dir => { const i = sameTrack.indexOf(raw), other = sameTrack[i + dir]; if (!other) return; const a = layers.indexOf(raw), b = layers.indexOf(other); [layers[a], layers[b]] = [layers[b], layers[a]]; ctx.onCommit(dir > 0 ? '图层往前' : '图层往后'); };
+  panel.append(el('div', { className: 'row' }, el('span', { className: 'muted', textContent: '同一轨道里' }),
+    Object.assign(el('button', { className: 'small', textContent: '往前一层' }), { disabled: sameTrack.indexOf(raw) === sameTrack.length - 1, onclick: () => shift(1) }),
+    Object.assign(el('button', { className: 'small', textContent: '往后一层' }), { disabled: sameTrack.indexOf(raw) === 0, onclick: () => shift(-1) })));
+  const content = [...LAYER_EMOTES.map(e => [`emote:${e.key}`, `漫符 ${e.label}`]), ...(raw.assetId ? [['image', '图片']] : [])];
+  panel.append(el('div', { className: 'grid2' },
+    select('内容', raw.emote ? `emote:${raw.emote}` : 'image', content, v => { raw.emote = v.startsWith('emote:') ? v.slice(6) : null; if (!raw.emote) delete raw.emote; }),
+    select('跟着谁', raw.follow ?? '', [['', '不跟随（固定在画面上）'], ...project.characters.filter(c => c.kind !== 'system').map(c => [c.id, c.name])], v => {
+      const was = !!raw.follow; raw.follow = v || null; if (!raw.follow) delete raw.follow;
+      if (was !== !!raw.follow) { const at = raw.follow ? { x: 0.05, y: -0.02 } : { x: 0.5, y: 0.3 }; Object.assign(raw.base, at); for (const k of raw.keyframes) { delete k.x; delete k.y; } }
+    })));
+  if (raw.follow) panel.append(el('div', { className: 'muted', textContent: '跟随角色头部：下面的横向 / 纵向是离头顶的偏移。角色不在场时不显示。' }));
   const slider = (label, obj, field, min, max, step, fallback, unit = '', scale = 1) => {
     const value = obj[field] ?? fallback;
     const out = el('output', { textContent: `${round(value * scale, 1)}${unit}` });
@@ -234,8 +278,8 @@ export function renderLayerTimeline(host, ctx) {
   };
   panel.append(el('div', { className: 'layer-section-title', textContent: key ? `关键帧 · ${describeAnchor(key.at, perf)}` : '位置（图层开始时）' }));
   panel.append(el('div', { className: 'layer-grid' },
-    slider('横向', target, 'x', -0.3, 1.3, 0.005, poseNow.x, '%', 100),
-    slider('纵向', target, 'y', -0.3, 1.3, 0.005, poseNow.y, '%', 100),
+    slider(raw.follow ? '偏移横' : '横向', target, 'x', raw.follow ? -0.5 : -0.3, raw.follow ? 0.5 : 1.3, 0.005, poseNow.x, '%', 100),
+    slider(raw.follow ? '偏移纵' : '纵向', target, 'y', raw.follow ? -0.5 : -0.3, raw.follow ? 0.5 : 1.3, 0.005, poseNow.y, '%', 100),
     slider('大小', target, 'width', 0.03, 1.5, 0.005, poseNow.width, '%', 100),
     slider('透明', target, 'opacity', 0, 1, 0.01, poseNow.opacity, '%', 100),
     slider('旋转', target, 'rotation', -180, 180, 1, poseNow.rotation, '°')));
@@ -261,7 +305,7 @@ export function renderLayerTimeline(host, ctx) {
   };
   panel.append(el('div', { className: 'row' }, addKey, el('span', { className: 'muted', textContent: '句内' }), offset, el('span', { className: 'muted', textContent: '秒' })));
 
-  panel.append(el('div', { className: 'layer-section-title', textContent: '画中画框' }));
+  if (!raw.emote) panel.append(el('div', { className: 'layer-section-title', textContent: '画中画框' }));
   const color = el('input', { type: 'color', value: raw.frame.borderColor });
   color.oninput = () => { raw.frame.borderColor = color.value; ctx.onPreview(false); };
   color.onchange = () => ctx.onCommit('图层：边框颜色');
@@ -302,10 +346,13 @@ export function updateLayerStageOverlay(overlay, ctx) {
   const pose = layerPoseAt({ ...resolvedLayer, fadeIn: 0, fadeOut: 0 }, Math.min(resolvedLayer.end - 1e-4, Math.max(resolvedLayer.start, ctx.time)));
   if (!pose) { overlay.hidden = true; return; }
   overlay.hidden = false;
-  const aspect = ctx.imageAspect(raw.assetId) ?? 1;
+  const aspect = raw.emote ? 16 / 9 : ctx.imageAspect(raw.assetId) ?? 1;
   const stageAspect = 16 / 9;
+  const head = raw.follow ? ctx.headOf?.(raw.follow) : null;
+  if (raw.follow && !head) { overlay.hidden = true; return; }
+  const origin = head ?? { x: 0, y: 0 };
   const box = el('div', { className: 'layer-stage-box', title: '拖动移动 · 拖右下角缩放' });
-  const place = p => { const h = p.width * stageAspect / aspect; Object.assign(box.style, { left: `${(p.x - p.width / 2) * 100}%`, top: `${(p.y - h / 2) * 100}%`, width: `${p.width * 100}%`, height: `${h * 100}%`, transform: p.rotation ? `rotate(${p.rotation}deg)` : '' }); };
+  const place = p => { const h = p.width * stageAspect / aspect, x = origin.x + p.x, y = origin.y + p.y; Object.assign(box.style, { left: `${(x - p.width / 2) * 100}%`, top: `${(y - h / 2) * 100}%`, width: `${p.width * 100}%`, height: `${h * 100}%`, transform: p.rotation ? `rotate(${p.rotation}deg)` : '' }); };
   place(pose);
   const corner = el('span', { className: 'layer-stage-corner' });
   box.append(corner);
@@ -326,7 +373,7 @@ export function updateLayerStageOverlay(overlay, ctx) {
     const start = { x: target.x ?? pose.x, y: target.y ?? pose.y, width: target.width ?? pose.width };
     const rect = overlay.getBoundingClientRect();
     const scaling = event.target === corner;
-    const cx = rect.left + start.x * rect.width, cy = rect.top + start.y * rect.height;
+    const cx = rect.left + (origin.x + start.x) * rect.width, cy = rect.top + (origin.y + start.y) * rect.height;
     const startDistance = Math.hypot(event.clientX - cx, event.clientY - cy) || 1;
     const ox = event.clientX, oy = event.clientY;
     try { box.setPointerCapture(event.pointerId); } catch {}

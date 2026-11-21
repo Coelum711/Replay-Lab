@@ -58,6 +58,10 @@ export interface StageLayer {
   fadeOut: number;
   keyframes: LayerKeyframe[];
   hidden?: boolean;
+  /** Built-in emote mark drawn instead of the image (see LAYER_EMOTES). */
+  emote?: string | null;
+  /** Character whose head the layer follows; x / y are then offsets from the head, in stage fractions. */
+  follow?: string | null;
 }
 
 export interface ResolvedLayer extends Omit<StageLayer, 'start' | 'end' | 'keyframes'> {
@@ -68,9 +72,31 @@ export interface ResolvedLayer extends Omit<StageLayer, 'start' | 'end' | 'keyfr
 
 export const DEFAULT_LAYER_POSE: LayerPose = { x: 0.72, y: 0.3, width: 0.34, opacity: 1, rotation: 0 };
 export const DEFAULT_LAYER_FRAME: LayerFrame = { radius: 10, borderWidth: 3, borderColor: '#ffffff', shadow: true, mask: 'rect' };
-export const LAYER_TRACKS: ReadonlyArray<{ key: string; label: string }> = [
-  { key: 'pip', label: '画中画' }, { key: 'image', label: '图片' }, { key: 'extra', label: '更多' }
+export interface LayerTrack { key: string; label: string }
+/** Timeline rows, top row first. The top row is drawn in front, like an editor's layer stack. */
+export const LAYER_TRACKS: ReadonlyArray<LayerTrack> = [
+  { key: 'emote', label: '漫符' }, { key: 'pip', label: '画中画' }, { key: 'image', label: '图片' }, { key: 'extra', label: '更多' }
 ];
+/** Built-in emote marks a layer can show instead of an image. */
+export const LAYER_EMOTES: ReadonlyArray<{ key: string; label: string }> = [
+  { key: 'anger', label: '怒' }, { key: 'sweat', label: '汗' }, { key: 'surprise', label: '！' }, { key: 'question', label: '？' },
+  { key: 'surprise-question', label: '！？' }, { key: 'dots', label: '…' }, { key: 'heart', label: '心' }, { key: 'note', label: '音符' },
+  { key: 'sparkle', label: '闪' }, { key: 'gloom', label: '黑线' }, { key: 'steam', label: '冒气' }, { key: 'idea', label: '灵光' }
+];
+
+/** The project's track order (top first), plus any track a layer still uses. */
+export function layerTracks(project: { layerTracks?: LayerTrack[] | null; layers?: Array<{ track?: string }> | null }): LayerTrack[] {
+  const tracks: LayerTrack[] = [];
+  for (const track of project.layerTracks?.length ? project.layerTracks : LAYER_TRACKS) {
+    const key = String(track?.key ?? '').trim();
+    if (key && !tracks.some(t => t.key === key)) tracks.push({ key, label: String(track.label || key) });
+  }
+  for (const layer of project.layers ?? []) {
+    const key = String(layer.track || 'pip');
+    if (!tracks.some(t => t.key === key)) tracks.push({ key, label: LAYER_TRACKS.find(t => t.key === key)?.label ?? key });
+  }
+  return tracks;
+}
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const finite = (v: unknown, fallback: number) => Number.isFinite(Number(v)) ? Number(v) : fallback;
@@ -96,7 +122,9 @@ export function normalizeLayer(raw: Partial<StageLayer> & { id: string }): Stage
     fadeIn: clamp(finite(raw.fadeIn, 0), 0, 10),
     fadeOut: clamp(finite(raw.fadeOut, 0), 0, 10),
     keyframes: (raw.keyframes ?? []).map(k => ({ ...k, id: String(k.id), at: anchor(k.at, false), curve: typeof k.curve === 'string' ? k.curve : 'easeInOut' })),
-    ...(raw.hidden ? { hidden: true } : {})
+    ...(raw.hidden ? { hidden: true } : {}),
+    ...(raw.emote && LAYER_EMOTES.some(e => e.key === raw.emote) ? { emote: raw.emote } : {}),
+    ...(raw.follow ? { follow: String(raw.follow) } : {})
   };
 }
 
@@ -118,20 +146,22 @@ export function anchorAt(time: number, lines: ReadonlyArray<{ lineId: string; st
 }
 
 /** Layers with times resolved; layers whose lines were deleted are dropped (and reported by the editor). */
-export function resolveLayers(layers: readonly StageLayer[] | undefined, lines: ReadonlyArray<{ lineId: string; start: number; duration: number }>): ResolvedLayer[] {
-  const out: ResolvedLayer[] = [];
-  for (const raw of layers ?? []) {
+export function resolveLayers(layers: readonly StageLayer[] | undefined, lines: ReadonlyArray<{ lineId: string; start: number; duration: number }>, tracks: readonly LayerTrack[] = LAYER_TRACKS): ResolvedLayer[] {
+  const out: Array<ResolvedLayer & { order: number }> = [];
+  for (const [order, raw] of (layers ?? []).entries()) {
     const layer = normalizeLayer(raw);
-    if (layer.hidden || !layer.assetId) continue;
+    if (layer.hidden || (!layer.assetId && !layer.emote)) continue;
     const start = anchorTime(layer.start, lines), end = anchorTime(layer.end, lines);
     if (start === null || end === null || end <= start) continue;
     const keyframes = layer.keyframes
       .map(k => ({ ...pick(k), time: anchorTime(k.at, lines), curve: k.curve }))
       .filter((k): k is Partial<LayerPose> & { time: number; curve: string } => k.time !== null && k.time >= start && k.time <= end)
       .sort((a, b) => a.time - b.time);
-    out.push({ ...layer, start, end, keyframes });
+    out.push({ ...layer, start, end, keyframes, order });
   }
-  return out;
+  // Draw order: bottom track first, top track last (in front); inside a track, later layers are in front.
+  const rank = (key: string) => { const at = tracks.findIndex(t => t.key === key); return at < 0 ? tracks.length : at; };
+  return out.sort((a, b) => rank(b.track) - rank(a.track) || a.order - b.order).map(({ order: _order, ...layer }) => layer);
 }
 
 function pick(k: Partial<LayerPose>): Partial<LayerPose> {

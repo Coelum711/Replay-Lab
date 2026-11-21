@@ -1,4 +1,4 @@
-import { resolveLayers } from './layers.js';
+import { resolveLayers, layerTracks } from './layers.js';
 import { stageSlotX } from './stage-slots.js';
 /** Two characters closer than this (fraction of stage width) read as standing on top of each other. */
 const OVERLAP_DISTANCE = 0.12;
@@ -807,7 +807,7 @@ export function compilePerformance(project: ReplayProject): PerformanceDocument 
     faceTemplates: (project.faceTemplates ?? []).map(template => ({ ...template, layers: { ...(template.layers ?? {}) } })),
     lines,
     directorBeats,
-    ...(project.layers?.length ? { layers: resolveLayers(project.layers, lines) } : {}),
+    ...(project.layers?.length ? { layers: resolveLayers(project.layers, lines, layerTracks(project)) } : {}),
     duration: lines.at(-1)?.end ?? 0
   };
 }
