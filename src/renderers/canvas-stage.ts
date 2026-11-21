@@ -33,7 +33,7 @@ import { replayEase } from './easing.js';
 import { dialogueSkinActive, resolveDialogueLayout, type DialogueSkin } from '../core/dialogue-skin.js';
 import { stageMoveProgress } from '../core/move-curves.js';
 import { stageSlotX } from '../core/stage-slots.js';
-import { layerPoseAt } from '../core/layers.js';
+import { layerPoseAt, animatedFrameAt, animatedImageType } from '../core/layers.js';
 import type { EmoteKind } from '../core/types.js';
 import { drawNineSlice, drawTintedNineSlice, drawRpgWindow, rpgTextColor, looksLikeRpgWindowSkin } from './window-skin.js';
 import { evaluateRplGenMotion } from './rplgen-motion.js';
@@ -636,6 +636,8 @@ export class CanvasStageRenderer {
   }
 
   clearAssetCache(): void {
+    for (const pending of this.animationCache.values()) void pending.then(anim => anim?.frames.forEach(frame => frame.close?.()));
+    this.animationCache.clear();
     for (const url of this.objectUrls) URL.revokeObjectURL(url);
     this.objectUrls.clear();
     this.imageCache.clear();
@@ -775,6 +777,44 @@ export class CanvasStageRenderer {
     const url = URL.createObjectURL(blob);
     this.objectUrls.add(url);
     return url;
+  }
+
+  private animationCache = new Map<string, Promise<{ frames: ImageBitmap[]; durations: number[] } | null>>();
+
+  /** All frames of an animated GIF / WebP / APNG, decoded once; null for still images or where ImageDecoder is missing. */
+  private animation(ref: string | null | undefined): Promise<{ frames: ImageBitmap[]; durations: number[] } | null> {
+    if (!ref) return Promise.resolve(null);
+    let pending = this.animationCache.get(ref);
+    if (!pending) {
+      pending = (async () => {
+        const Decoder = (globalThis as { ImageDecoder?: typeof ImageDecoder }).ImageDecoder;
+        if (!Decoder || typeof createImageBitmap !== 'function') return null;
+        // Read bytes from the asset itself: the app's CSP does not let fetch() read blob: URLs.
+        const source = /^(data:|https?:)/i.test(ref) ? ref : await this.resolveAsset(ref);
+        if (!source) return null;
+        const bytes = typeof source === 'string' ? new Uint8Array(await (await fetch(source)).arrayBuffer())
+          : source instanceof Blob ? new Uint8Array(await source.arrayBuffer())
+          : source instanceof Uint8Array ? source : new Uint8Array(source as ArrayBuffer);
+        const type = animatedImageType(bytes);
+        if (!type || !(await Decoder.isTypeSupported(type))) return null;
+        const decoder = new Decoder({ data: bytes, type });
+        try {
+          await decoder.tracks.ready;
+          const count = Math.min(decoder.tracks.selectedTrack?.frameCount ?? 0, 900);
+          if (count <= 1) return null;
+          const frames: ImageBitmap[] = [], durations: number[] = [];
+          for (let i = 0; i < count; i++) {
+            const { image } = await decoder.decode({ frameIndex: i });
+            durations.push((image.duration ?? 100000) / 1e6);
+            frames.push(await createImageBitmap(image));
+            image.close();
+          }
+          return { frames, durations };
+        } finally { decoder.close(); }
+      })().catch(() => null);
+      this.animationCache.set(ref, pending);
+    }
+    return pending;
   }
 
   private async image(ref: string | null | undefined): Promise<HTMLImageElement | null> {
@@ -1512,6 +1552,8 @@ export class CanvasStageRenderer {
       }
       const img = await this.image(layer.assetId);
       if (!img || !img.naturalWidth) continue;
+      const anim = await this.animation(layer.assetId);
+      const picture: CanvasImageSource = anim ? anim.frames[animatedFrameAt(anim.durations, time - layer.start, layer.speed ?? 1, layer.loop !== false)]! : img;
       const w = pose.width * width, h = w * img.naturalHeight / img.naturalWidth;
       const f = layer.frame, radius = f.mask === 'circle' ? Math.min(w, h) / 2 : Math.min(f.radius * k, w / 2, h / 2), border = f.borderWidth * k;
       ctx.save();
@@ -1520,7 +1562,7 @@ export class CanvasStageRenderer {
       if (pose.rotation) ctx.rotate(pose.rotation * Math.PI / 180);
       const shape = () => { ctx.beginPath(); if (f.mask === 'circle') ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); else roundRect(ctx, -w / 2, -h / 2, w, h, radius); };
       if (f.shadow) { ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 18 * k; ctx.shadowOffsetY = 6 * k; shape(); ctx.fillStyle = f.borderWidth ? f.borderColor : 'rgba(0,0,0,.4)'; ctx.fill(); ctx.restore(); }
-      ctx.save(); shape(); ctx.clip(); ctx.drawImage(img, -w / 2, -h / 2, w, h); ctx.restore();
+      ctx.save(); shape(); ctx.clip(); ctx.drawImage(picture, -w / 2, -h / 2, w, h); ctx.restore();
       if (border > 0) { shape(); ctx.lineWidth = border; ctx.strokeStyle = f.borderColor; ctx.stroke(); }
       ctx.restore();
     }

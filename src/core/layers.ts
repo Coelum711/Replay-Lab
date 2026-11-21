@@ -62,6 +62,9 @@ export interface StageLayer {
   emote?: string | null;
   /** Character whose head the layer follows; x / y are then offsets from the head, in stage fractions. */
   follow?: string | null;
+  /** Animated images (GIF / WebP / APNG): play speed (1 = as authored) and whether to loop or stop on the last frame. */
+  speed?: number;
+  loop?: boolean;
 }
 
 export interface ResolvedLayer extends Omit<StageLayer, 'start' | 'end' | 'keyframes'> {
@@ -124,7 +127,9 @@ export function normalizeLayer(raw: Partial<StageLayer> & { id: string }): Stage
     keyframes: (raw.keyframes ?? []).map(k => ({ ...k, id: String(k.id), at: anchor(k.at, false), curve: typeof k.curve === 'string' ? k.curve : 'easeInOut' })),
     ...(raw.hidden ? { hidden: true } : {}),
     ...(raw.emote && LAYER_EMOTES.some(e => e.key === raw.emote) ? { emote: raw.emote } : {}),
-    ...(raw.follow ? { follow: String(raw.follow) } : {})
+    ...(raw.follow ? { follow: String(raw.follow) } : {}),
+    ...(raw.speed !== undefined && Number.isFinite(Number(raw.speed)) && Number(raw.speed) !== 1 ? { speed: clamp(Number(raw.speed), 0.1, 8) } : {}),
+    ...(raw.loop === false ? { loop: false } : {})
   };
 }
 
@@ -191,4 +196,32 @@ export function layerPoseAt(layer: ResolvedLayer, time: number): LayerPose | nul
   pose.opacity = clamp(pose.opacity, 0, 1) * fadeIn * fadeOut;
   pose.width = Math.max(0.005, pose.width);
   return pose;
+}
+
+/**
+ * Which frame of an animated image shows `elapsed` seconds after the layer appears. Pure, so scrubbing,
+ * preview and export always pick the same frame. `durations` are seconds per frame.
+ */
+export function animatedFrameAt(durations: readonly number[], elapsed: number, speed = 1, loop = true): number {
+  if (durations.length <= 1) return 0;
+  const steps = durations.map(d => (Number.isFinite(d) && d > 0.005 ? d : 0.1));
+  const total = steps.reduce((sum, d) => sum + d, 0);
+  let t = Math.max(0, elapsed) * Math.max(0.01, speed);
+  if (t >= total) { if (!loop) return steps.length - 1; t %= total; }
+  for (let i = 0; i < steps.length; i++) { if (t < steps[i]!) return i; t -= steps[i]!; }
+  return steps.length - 1;
+}
+
+/** Image formats that may carry animation, recognised from their first bytes. */
+export function animatedImageType(bytes: Uint8Array): 'image/gif' | 'image/webp' | 'image/png' | null {
+  const ascii = (from: number, to: number) => String.fromCharCode(...bytes.subarray(from, to));
+  if (bytes.length >= 6 && ascii(0, 3) === 'GIF') return 'image/gif';
+  if (bytes.length >= 12 && ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
+  if (bytes.length >= 8 && bytes[0] === 0x89 && ascii(1, 4) === 'PNG') {
+    // APNG has an acTL chunk before the first IDAT.
+    const head = ascii(8, Math.min(bytes.length, 4096));
+    const actl = head.indexOf('acTL'), idat = head.indexOf('IDAT');
+    return actl >= 0 && (idat < 0 || actl < idat) ? 'image/png' : null;
+  }
+  return null;
 }

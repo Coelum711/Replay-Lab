@@ -86,3 +86,21 @@ test('the renderer follows heads in screen space and draws built-in emotes', asy
   assert.match(src, /if \(layer\.follow\) \{ const head = this\.screenHeads\.get\(layer\.follow\); if \(!head\) continue;/);
   assert.match(src, /drawEmote\(ctx, layer\.emote as EmoteKind/);
 });
+
+test('animated images pick frames by time: loop, speed and stop-on-last', async () => {
+  const { animatedFrameAt, animatedImageType } = await import('../dist/index.js');
+  const d = [0.2, 0.2, 0.2];
+  assert.deepEqual([0, 0.25, 0.45, 0.65].map(t => animatedFrameAt(d, t)), [0, 1, 2, 0]);
+  assert.equal(animatedFrameAt(d, 0.25, 2), 2, 'double speed');
+  assert.equal(animatedFrameAt(d, 5, 1, false), 2, 'no loop holds the last frame');
+  assert.equal(animatedFrameAt([0.1], 3), 0);
+  assert.equal(animatedFrameAt([0, 0, 0], 0.15), 1, 'zero delays count as 0.1s like browsers do');
+  const bytes = s => Uint8Array.from(s, c => c.charCodeAt(0));
+  assert.equal(animatedImageType(bytes('GIF89a......')), 'image/gif');
+  assert.equal(animatedImageType(bytes('RIFF\0\0\0\0WEBPVP8X')), 'image/webp');
+  const png = head => Uint8Array.from([0x89, ...bytes(`PNG\r\n\x1a\n${head}`)]);
+  assert.equal(animatedImageType(png('....IHDR....acTL....IDAT')), 'image/png', 'APNG');
+  assert.equal(animatedImageType(png('....IHDR....IDAT')), null, 'a still PNG');
+  assert.equal(normalizeLayer({ id: 'g', speed: 2, loop: false }).speed, 2);
+  assert.equal(normalizeLayer({ id: 'g', speed: 1 }).speed, undefined);
+});
