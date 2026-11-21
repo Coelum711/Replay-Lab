@@ -151,7 +151,7 @@ test('studio workbench has a 立绘 page; character cards link to it instead of 
   const page = fs.readFileSync(new URL('../web/portrait-workbench.js', import.meta.url), 'utf8');
   assert.match(html, /data-workbench-tab="portrait">立绘</);
   assert.match(html, /data-workbench-pane="portrait"/);
-  assert.match(js, /'animation','portrait'\]/);
+  assert.match(js, /'animation','portrait'[\],]/);
   assert.doesNotMatch(js, /data-puppet-param/);
   assert.match(js, /data-open-portrait/);
   for (const id of ['lookX', 'lookY', 'eyeSquash', 'browY', 'browAngle', 'mouthY', 'mouthTilt']) assert.match(page, new RegExp(`'${id}'`));

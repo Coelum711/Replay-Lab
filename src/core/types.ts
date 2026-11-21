@@ -1038,6 +1038,8 @@ export interface ReplayProject {
   customObjectTakes?: CustomObjectInteractionTake[];
   mediaDefinitions: ReplayMediaDefinition[];
   faceTemplates: FaceTemplate[];
+  /** Timeline layers (images, picture-in-picture) anchored to lines. */
+  layers?: import('./layers.js').StageLayer[];
   settings: ReplaySettings;
   /** Unified visual-scene foundation. Existing authoring fields remain the source of truth. */
   sceneGraph: SceneGraphSettings;
@@ -1150,6 +1152,8 @@ export interface PerformanceDocument {
   customObjectTakes?: CustomObjectInteractionTake[];
   mediaDefinitions: ReplayMediaDefinition[];
   faceTemplates: FaceTemplate[];
+  /** Layers with their line anchors resolved to seconds. */
+  layers?: import('./layers.js').ResolvedLayer[];
   lines: PerformanceLine[];
   /** Human-readable grouping of consecutive director commands and implicit auto-blocking changes. */
   directorBeats: DirectorBeat[];

@@ -21,6 +21,7 @@ import { createExportSession } from './export-session.js';
 import {desktopCall} from './desktop-client.js';
 import {renderDialogueSkinCard} from './dialogue-skin-card.js';
 import {renderStageMoveCard} from './stage-move-card.js';
+import {renderLayerTimeline,updateLayerStageOverlay} from './layer-timeline.js';
 import { VirtualScriptList } from './virtual-script-list.js';
 import { renderLineTakePanel, onVoiceQueueChange, voiceNotice, clearVoiceNotice } from './line-take-panel.js';
 import { CustomObjectEditorController } from './custom-object-editor-controller.js';
@@ -1097,10 +1098,41 @@ function renderVoiceLineWorkbench(){
   host.append(openDetail);
 }
 function setWorkbenchTab(tab){
-  const allowed=['performance','audio','voice','animation','portrait'];if(!allowed.includes(tab))tab='performance';uiPrefs.workbenchTab=tab;saveUiPrefs();
+  const allowed=['performance','audio','voice','animation','portrait','layers'];if(!allowed.includes(tab))tab='performance';uiPrefs.workbenchTab=tab;saveUiPrefs();
   document.querySelectorAll('[data-workbench-tab]').forEach(button=>button.classList.toggle('active',button.dataset.workbenchTab===tab));
   document.querySelectorAll('[data-workbench-pane]').forEach(pane=>pane.hidden=pane.dataset.workbenchPane!==tab);
-  if(tab==='audio')audioWorkbench?.render();if(tab==='voice')renderVoiceLineWorkbench();if(tab==='portrait')renderPortraitPane();
+  if(tab==='audio')audioWorkbench?.render();if(tab==='voice')renderVoiceLineWorkbench();if(tab==='portrait')renderPortraitPane();renderLayerPane();
+}
+/** Layer images are copied into assets/layers (kept in memory until a folder is connected). */
+async function importLayerFiles(files){
+  const ids=[];
+  for(const file of files){
+    const asset={id:makeId('asset'),kind:'other',name:file.name,mime:file.type||'image/png',metadata:{layerImage:true}};
+    project.assets.push(asset);runtimeFiles.set(asset.id,file);
+    if(workspace){try{await persistAssetFile(workspace,project,asset,file,`assets/layers/${asset.id}_${sanitizePathPart(file.name)}`)}catch(error){$('#importStatus').textContent=`图片已加入，但写入工程文件夹失败：${error.message||error}`}}
+    ids.push(asset.id);
+  }
+  invalidateMediaCaches();return ids;
+}
+const layerImageAspects=new Map();
+function layerImageAspect(assetId){
+  if(!assetId)return null;if(layerImageAspects.has(assetId))return layerImageAspects.get(assetId);
+  layerImageAspects.set(assetId,null);
+  void resolveAsset(assetId).then(async source=>{if(!source)return;const url=typeof source==='string'?source:URL.createObjectURL(source);const img=new Image();img.onload=()=>{layerImageAspects.set(assetId,img.naturalWidth/img.naturalHeight||1);if(typeof source!=='string')URL.revokeObjectURL(url);renderLayerOverlay()};img.src=url});
+  return null;
+}
+function renderLayerOverlay(){
+  updateLayerStageOverlay($('#layerStageEditor'),{project,getPerf:()=>performanceDoc,time:playbackCursorTime,imageAspect:layerImageAspect,visible:!$('#workbenchLayers')?.hidden,
+    onPreview:()=>{compile();void renderPreviewStatic()},onCommit:label=>{scheduleSave(label,'layers');renderAll()}});
+}
+function renderLayerPane(){
+  renderLayerOverlay();
+  const host=$('#workbenchLayers');if(!host||host.hidden)return;
+  renderLayerTimeline(host,{project,perf:performanceDoc,getPerf:()=>performanceDoc,time:playbackCursorTime,selectedIndex,
+    selectLine:index=>{selectedIndex=index;playbackCursorTime=performanceDoc?.lines[index]?.start??0;renderAll()},
+    importFiles:importLayerFiles,setStatus:text=>{$('#importStatus').textContent=text},
+    onPreview:rerender=>{compile();void renderPreviewStatic();if(rerender)renderLayerPane()},
+    onCommit:label=>{scheduleSave(label,'layers');renderAll()}});
 }
 function renderPortraitPane(){
   const host=$('#workbenchPortrait');if(!host||host.hidden)return;
@@ -1228,7 +1260,7 @@ function setContentView(view,{persist=true,render=true}={}){
   syncCenterContext();
   if(render)renderCurrentView();
 }
-function renderAll(){if(!project)return;selectedIndex=Math.max(0,Math.min(selectedIndex,Math.max(0,project.lines.length-1)));refreshSearch();compile();updateToolbarOptions();renderCurrentView();renderInspector();stageDirectEditor?.render();cameraDirectEditor?.render();sceneViewport?.render();renderStageQuickControls();renderAnimationPane();renderPortraitPane();renderVoiceLineWorkbench();audioWorkbench?.render();updateSelectionUi();updateHistoryUi();void renderPreviewStatic();emitProjectState()}
+function renderAll(){if(!project)return;selectedIndex=Math.max(0,Math.min(selectedIndex,Math.max(0,project.lines.length-1)));refreshSearch();compile();updateToolbarOptions();renderCurrentView();renderInspector();stageDirectEditor?.render();cameraDirectEditor?.render();sceneViewport?.render();renderStageQuickControls();renderAnimationPane();renderPortraitPane();renderLayerPane();renderVoiceLineWorkbench();audioWorkbench?.render();updateSelectionUi();updateHistoryUi();void renderPreviewStatic();emitProjectState()}
 
 function bindEdit(id,fn,event='change',fullRender=true){$('#'+id).addEventListener(event,()=>{const line=currentLine();if(!line)return;fn(line,$('#'+id).value);scheduleSave('编辑台词',`${line.id}:${id}`);if(fullRender)renderAll()})}
 bindEdit('speakerEdit',(l,v)=>l.speakerId=v);bindEdit('typeEdit',(l,v)=>{l.type=v;if(v==='command'){l.text=l.text.startsWith('/')?l.text:'/wait 0';l.mouth='off';syncCommandLine(l)}else l.command=null;if(v==='dice')l.diceRolls??=[];if(v==='hitpoint')ensureHitPoint(l);if(v==='wheel'){l.wheel??={title:'转盘',mode:'history',steps:[{title:'转盘',options:[{id:'a',label:'A',weight:1},{id:'b',label:'B',weight:1}],resultId:'a',resultLabel:'A'}],blockingAuto:false};l.mouth='off';l.duration??=2.8}if(v==='bubble'){ensureBubble(l);l.mouth='off'}});bindEdit('durationEdit',(l,v)=>l.duration=v===''?null:Number(v));bindEdit('textEdit',(l,v)=>{l.text=v;if(l.type==='command')syncCommandLine(l);if(l.type==='bubble')ensureBubble(l).mainText=v},'input',false);$('#textEdit').addEventListener('change',()=>renderAll());for(const button of document.querySelectorAll('[data-text-tag]'))button.addEventListener('click',()=>{const box=$('#textEdit'),tag=button.dataset.textTag,start=box.selectionStart??box.value.length,end=box.selectionEnd??start;const picked=box.value.slice(start,end)||'文字';box.value=`${box.value.slice(0,start)}{${tag}}${picked}{/${tag}}${box.value.slice(end)}`;box.focus();box.setSelectionRange(start+tag.length+2,start+tag.length+2+picked.length);box.dispatchEvent(new Event('input'));box.dispatchEvent(new Event('change'))});bindEdit('poseEdit',(l,v)=>{if(v==='__inherit__')delete l.pose;else l.pose=v});bindEdit('expressionEdit',(l,v)=>{if(v==='__inherit__'){l.expressionMode='inherit';return}l.expressionMode='set';l.expression=v});bindEdit('mouthEdit',(l,v)=>l.mouth=v);bindEdit('sfxEdit',(l,v)=>l.sfxAssetId=v||null);bindEdit('textEffectEdit',(l,v)=>l.textEffect=v);bindEdit('textEffectDurationEdit',(l,v)=>l.textEffectDuration=v===''?null:Number(v));
