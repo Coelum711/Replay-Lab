@@ -60,7 +60,7 @@ export function renderLayerTimeline(host, ctx) {
   const fileInput = el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
   const addAt = async (files, time) => {
     const images = [...files].filter(file => file.type.startsWith('image/'));
-    if (!images.length) { ctx.setStatus('只能加入图片（GIF 和视频会在下一步支持）。'); return; }
+    if (!images.length) { ctx.setStatus('只能加入图片（GIF、WebP、PNG 动图也可以；视频之后支持）。'); return; }
     const ids = await ctx.importFiles(images);
     const t = time ?? (lines[ctx.selectedIndex]?.start ?? win.t0);
     for (const [i, assetId] of ids.entries()) {
@@ -305,6 +305,17 @@ export function renderLayerTimeline(host, ctx) {
   };
   panel.append(el('div', { className: 'row' }, addKey, el('span', { className: 'muted', textContent: '句内' }), offset, el('span', { className: 'muted', textContent: '秒' })));
 
+  const asset = raw.assetId ? project.assets.find(a => a.id === raw.assetId) : null;
+  if (!raw.emote && asset && /gif|webp|png/i.test(`${asset.mime ?? ''} ${asset.name ?? ''}`)) {
+    panel.append(el('div', { className: 'layer-section-title', textContent: '动图（GIF / WebP / APNG）' }));
+    const loop = el('input', { type: 'checkbox', checked: raw.loop !== false });
+    loop.onchange = () => { if (loop.checked) delete raw.loop; else raw.loop = false; ctx.onCommit(loop.checked ? '动图循环' : '动图播完停住'); };
+    const speedTarget = { speed: raw.speed ?? 1 };
+    const speed = slider('速度', speedTarget, 'speed', 0.25, 4, 0.05, speedTarget.speed, '×');
+    speed.querySelector('input').addEventListener('input', () => { if (speedTarget.speed === 1) delete raw.speed; else raw.speed = speedTarget.speed; });
+    panel.append(el('div', { className: 'layer-grid' }, speed), el('label', { className: 'muted row' }, loop, '循环播放（关掉就播完停在最后一帧）'));
+    panel.append(el('div', { className: 'muted', textContent: '动图从图层出现的那一刻开始播，拖进度条看到的帧和导出时完全一样。静态图片这两项不起作用。' }));
+  }
   if (!raw.emote) panel.append(el('div', { className: 'layer-section-title', textContent: '画中画框' }));
   const color = el('input', { type: 'color', value: raw.frame.borderColor });
   color.oninput = () => { raw.frame.borderColor = color.value; ctx.onPreview(false); };
