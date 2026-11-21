@@ -1122,7 +1122,7 @@ function layerImageAspect(assetId){
   return null;
 }
 function renderLayerOverlay(){
-  updateLayerStageOverlay($('#layerStageEditor'),{project,getPerf:()=>performanceDoc,time:playbackCursorTime,imageAspect:layerImageAspect,visible:!$('#workbenchLayers')?.hidden,
+  updateLayerStageOverlay($('#layerStageEditor'),{project,getPerf:()=>performanceDoc,headOf:id=>renderer?.headOnScreen?.(id)??null,time:playbackCursorTime,imageAspect:layerImageAspect,visible:!$('#workbenchLayers')?.hidden,
     onPreview:()=>{compile();void renderPreviewStatic()},onCommit:label=>{scheduleSave(label,'layers');renderAll()}});
 }
 function renderLayerPane(){

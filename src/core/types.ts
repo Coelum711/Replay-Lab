@@ -1040,6 +1040,8 @@ export interface ReplayProject {
   faceTemplates: FaceTemplate[];
   /** Timeline layers (images, picture-in-picture) anchored to lines. */
   layers?: import('./layers.js').StageLayer[];
+  /** Layer timeline rows, top (front-most) first. */
+  layerTracks?: import('./layers.js').LayerTrack[];
   settings: ReplaySettings;
   /** Unified visual-scene foundation. Existing authoring fields remain the source of truth. */
   sceneGraph: SceneGraphSettings;

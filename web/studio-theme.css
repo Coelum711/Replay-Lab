@@ -212,3 +212,10 @@ body.studio-shell .panel.center .stage-wrap{width:min(100%,85.333vh,924px);margi
 .layer-stage-editor[hidden]{display:none}
 .layer-stage-box{position:absolute;pointer-events:auto;outline:1.5px dashed #c9b8ff;outline-offset:2px;cursor:move;touch-action:none}
 .layer-stage-corner{position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;background:#c9b8ff;border-radius:3px;cursor:nwse-resize}
+.layer-row-head{display:flex;flex-direction:column;gap:2px;align-items:flex-start}
+.track-label{cursor:text}
+.track-tools{display:flex;gap:2px}
+.layer-row .tiny{font-size:10px;padding:0 4px;min-height:0;line-height:14px}
+.track-rename{width:48px;font-size:11px;padding:1px 3px}
+.layer-row .add-track{justify-self:start;margin:4px 0}
+.layer-row{grid-template-columns:60px minmax(0,1fr)}

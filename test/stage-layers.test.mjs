@@ -64,3 +64,25 @@ test('layer images live in assets/layers and the studio wires the tab and previe
   assert.match(src, /await this\.drawStageLayers\('characters', line\.start \+ localTime\)/);
   assert.match(src, /await this\.drawStageLayers\('top', line\.start \+ localTime\)/);
 });
+
+test('emote layers need no image, and draw order follows the track stack (top row in front)', async () => {
+  const { p, ids } = project();
+  const { layerTracks } = await import('../dist/index.js');
+  const mk = (id, track, extra = {}) => normalizeLayer({ id, name: id, assetId: 'img', track, start: { lineId: ids[0], offset: 0 }, end: { lineId: ids[3], offset: null }, ...extra });
+  p.layers = [mk('pipA', 'pip'), mk('emo', 'emote', { assetId: null, emote: 'anger', follow: p.characters[0].id }), mk('img', 'image'), mk('pipB', 'pip')];
+  assert.deepEqual(compilePerformance(p).layers.map(l => l.id), ['img', 'pipA', 'pipB', 'emo'], 'default stack: 漫符 on top, then 画中画, then 图片');
+  p.layerTracks = [{ key: 'pip', label: '画中画' }, { key: 'emote', label: '漫符' }, { key: 'image', label: '图片' }];
+  assert.deepEqual(compilePerformance(p).layers.map(l => l.id), ['img', 'emo', 'pipA', 'pipB'], 'moving 画中画 up puts it in front of the emote');
+  const emote = compilePerformance(p).layers.find(l => l.id === 'emo');
+  assert.equal(emote.emote, 'anger'); assert.equal(emote.follow, p.characters[0].id);
+  p.layers.push(mk('custom', 'myTrack'));
+  assert.ok(layerTracks(p).some(t => t.key === 'myTrack'), 'a track a layer still uses is never lost');
+  assert.equal(normalizeLayer({ id: 'x', emote: 'not-a-mark' }).emote, undefined);
+});
+
+test('the renderer follows heads in screen space and draws built-in emotes', async () => {
+  const src = await readFile(new URL('../src/renderers/canvas-stage.ts', import.meta.url), 'utf8');
+  assert.match(src, /this\.screenHeads = new Map\(\[\.\.\.heads\]\.map/);
+  assert.match(src, /if \(layer\.follow\) \{ const head = this\.screenHeads\.get\(layer\.follow\); if \(!head\) continue;/);
+  assert.match(src, /drawEmote\(ctx, layer\.emote as EmoteKind/);
+});
